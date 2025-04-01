@@ -1,0 +1,87 @@
+app_profile: generic
+
+server:
+  http_port: 8080
+  gossip_port: 7946
+  metrics_port: 9090
+  read_timeout: 30s
+  write_timeout: 120s
+  max_request_body: 1073741824  # 1GB
+
+php_fpm:
+  socket: unix:///run/php/php-fpm.sock
+  binary: php-fpm
+  config: /usr/local/etc/php-fpm.d/www.conf
+  pool_size_min: 2
+  pool_size_max: 20
+  php_ini_overrides:
+    session.save_handler: user
+    opcache.validate_timestamps: "0"
+    upload_max_filesize: 100M
+    post_max_size: 100M
+
+session:
+  enabled: true
+  backend: db
+  cookie_name: PHPSESSID
+  ttl: 24h
+  lock_timeout: 30s
+
+cluster:
+  enabled: false
+  discovery: dns
+  dns_service: phpcloud-gossip.default.svc.cluster.local
+  static_peers: []
+  node_name: ""
+
+db:
+  driver: postgres
+  dsn: ""  # Set via PHPCLOUD_DB_DSN environment variable
+  max_open_conns: 10
+  max_idle_conns: 5
+  schema_prefix: _phpcloud_
+
+migration:
+  enabled: true
+  command: []
+  lock_key: phpcloud:migration
+  lock_timeout: 30m
+  version_query: ""
+  version_file: ""
+
+cron:
+  enabled: true
+  leader_only: true
+  jobs: []
+
+static_files:
+  enabled: true
+  extensions:
+    - .css
+    - .js
+    - .png
+    - .jpg
+    - .jpeg
+    - .gif
+    - .svg
+    - .ico
+    - .woff
+    - .woff2
+    - .ttf
+    - .map
+  root: /var/www/html
+
+maintenance:
+  enabled: true
+  response_code: 503
+  retry_after: 30s
+  message: "Service is updating, please wait."
+
+logging:
+  level: info
+  format: json
+  request_logs: true
+
+metrics:
+  enabled: true
+  path: /metrics
