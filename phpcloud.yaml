@@ -1,0 +1,53 @@
+app_profile: generic
+
+server:
+  http_port: 8080
+  gossip_port: 7946
+  metrics_port: 9090
+  read_timeout: 30s
+  write_timeout: 120s
+  max_request_body: 134217728
+
+php_fpm:
+  socket: tcp://wordpress:9000
+  external: true
+
+session:
+  enabled: true
+  backend: db
+  cookie_name: PHPSESSID
+  ttl: 1h
+
+cluster:
+  enabled: false
+
+migration:
+  enabled: true
+  version_file: /tmp/version.txt
+  lock_key: wordpress:migration
+  lock_timeout: 5m
+
+cron:
+  enabled: false
+
+static_files:
+  enabled: true
+  extensions:
+    - .css
+    - .js
+    - .png
+  root: /var/www/html
+
+maintenance:
+  enabled: true
+  response_code: 503
+  retry_after: 30s
+  message: "WordPress is being updated. Please wait..."
+
+logging:
+  level: debug
+  format: json
+
+metrics:
+  enabled: true
+  path: /metrics

@@ -1,0 +1,59 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+phpcloud
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.txt
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local environment files
+.env
+.env.local
+
+# Build artifacts
+bin/
+dist/
+build/
+
+# Temporary files
+*.log
+*.tmp
+tmp/
+temp/
+
+# Database files (for local testing)
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker volumes
+docker-volumes/
+
+# Test artifacts
+test-results/
+*.cover
+
+# OS files
+Thumbs.db
