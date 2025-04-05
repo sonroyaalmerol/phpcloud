@@ -1,0 +1,172 @@
+name: Integration Test - WordPress
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  wordpress-test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build PHPCloud image
+      run: docker build -t phpcloud:test -f Dockerfile .
+    
+    - name: Start WordPress stack
+      run: |
+        cat > docker-compose.wordpress.yml << 'EOF'
+        version: '3.8'
+        services:
+          wordpress:
+            image: wordpress:6.4-php8.2-fpm
+            volumes:
+              - wordpress_data:/var/www/html
+            environment:
+              WORDPRESS_DB_HOST: db:3306
+              WORDPRESS_DB_USER: wordpress
+              WORDPRESS_DB_PASSWORD: wordpress
+              WORDPRESS_DB_NAME: wordpress
+            depends_on:
+              db:
+                condition: service_healthy
+          
+          db:
+            image: mysql:8.0
+            environment:
+              MYSQL_ROOT_PASSWORD: rootpass
+              MYSQL_DATABASE: wordpress
+              MYSQL_USER: wordpress
+              MYSQL_PASSWORD: wordpress
+            healthcheck:
+              test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+              interval: 5s
+              timeout: 3s
+              retries: 10
+          
+          phpcloud:
+            image: phpcloud:test
+            ports:
+              - "8080:8080"
+            volumes:
+              - wordpress_data:/var/www/html:ro
+              - ./test-config.yaml:/phpcloud/phpcloud.yaml:ro
+            depends_on:
+              - wordpress
+              - db
+        
+        volumes:
+          wordpress_data:
+        EOF
+        
+        cat > test-config.yaml << 'EOF'
+        app_profile: generic
+        server:
+          http_port: 8080
+          gossip_port: 7946
+          metrics_port: 9090
+          read_timeout: 30s
+          write_timeout: 120s
+          max_request_body: 134217728
+        php_fpm:
+          socket: tcp://wordpress:9000
+          external: true
+        session:
+          enabled: true
+          backend: db
+          cookie_name: PHPSESSID
+          ttl: 1h
+        cluster:
+          enabled: false
+        migration:
+          enabled: false
+        cron:
+          enabled: false
+        static_files:
+          enabled: true
+          extensions:
+            - .css
+            - .js
+            - .png
+            - .jpg
+          root: /var/www/html
+        logging:
+          level: info
+          format: json
+        metrics:
+          enabled: true
+          path: /metrics
+        EOF
+        
+        docker-compose -f docker-compose.wordpress.yml up -d
+        sleep 45
+    
+    - name: Test health endpoint
+      run: |
+        echo "Testing health endpoint..."
+        curl -s --retry 10 --retry-delay 3 http://localhost:8080/phpcloud/healthz | grep "healthy"
+        echo "✅ Health check passed"
+    
+    - name: Test WordPress installation page
+      run: |
+        echo "Testing WordPress installation page..."
+        curl -sL http://localhost:8080/ | grep "WordPress"
+        echo "✅ WordPress installation page accessible"
+    
+    - name: Test static file serving
+      run: |
+        echo "Testing static file serving..."
+        curl -s http://localhost:8080/wp-includes/css/dashicons.min.css | head -1
+        echo "✅ Static files served"
+    
+    - name: Test metrics endpoint
+      run: |
+        echo "Testing metrics endpoint..."
+        curl -s http://localhost:9090/metrics | grep "go_gc_duration_seconds"
+        echo "✅ Metrics endpoint working"
+    
+    - name: Install WordPress
+      run: |
+        echo "Installing WordPress..."
+        curl -s -L -X POST \
+          -d "weblog_title=GitHubTest" \
+          -d "user_name=admin" \
+          -d "admin_password=testpass123" \
+          -d "admin_password2=testpass123" \
+          -d "admin_email=admin@test.com" \
+          -d "Submit=Install+WordPress" \
+          http://localhost:8080/wp-admin/install.php?step=2 | grep "Success"
+        echo "✅ WordPress installed successfully"
+    
+    - name: Test login and session
+      run: |
+        echo "Testing login and session..."
+        curl -s -c /tmp/wp_cookies.txt -L \
+          -d "log=admin" \
+          -d "pwd=testpass123" \
+          http://localhost:8080/wp-login.php | grep "Dashboard"
+        
+        # Test session persistence
+        curl -s -b /tmp/wp_cookies.txt http://localhost:8080/wp-admin/ | grep "Dashboard"
+        echo "✅ Login and session working"
+    
+    - name: Get logs on failure
+      if: failure()
+      run: |
+        echo "=== PHPCloud Logs ==="
+        docker-compose -f docker-compose.wordpress.yml logs phpcloud
+        echo ""
+        echo "=== WordPress Logs ==="
+        docker-compose -f docker-compose.wordpress.yml logs wordpress
+    
+    - name: Cleanup
+      if: always()
+      run: docker-compose -f docker-compose.wordpress.yml down -v
