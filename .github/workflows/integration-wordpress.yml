@@ -23,7 +23,7 @@ jobs:
     
     - name: Start WordPress stack
       run: |
-        cat > docker compose.wordpress.yml << 'EOF'
+        cat > docker-compose.wordpress.yml << 'EOF'
         version: '3.8'
         services:
           wordpress:
@@ -106,7 +106,7 @@ jobs:
           path: /metrics
         EOF
         
-        docker compose -f docker compose.wordpress.yml up -d
+        docker compose -f docker-compose.wordpress.yml up -d
         sleep 45
     
     - name: Test health endpoint
@@ -162,11 +162,11 @@ jobs:
       if: failure()
       run: |
         echo "=== PHPCloud Logs ==="
-        docker compose -f docker compose.wordpress.yml logs phpcloud
+        docker compose -f docker-compose.wordpress.yml logs phpcloud
         echo ""
         echo "=== WordPress Logs ==="
-        docker compose -f docker compose.wordpress.yml logs wordpress
+        docker compose -f docker-compose.wordpress.yml logs wordpress
     
     - name: Cleanup
       if: always()
-      run: docker compose -f docker compose.wordpress.yml down -v
+      run: docker compose -f docker-compose.wordpress.yml down -v

@@ -23,7 +23,7 @@ jobs:
     
     - name: Start WordPress with SQL Proxy
       run: |
-        cat > docker compose.sqlproxy.yml << 'EOF'
+        cat > docker-compose.sqlproxy.yml << 'EOF'
         version: '3.8'
         services:
           mysql:
@@ -107,7 +107,7 @@ jobs:
           target_port: 3306
         EOF
         
-        docker compose -f docker compose.sqlproxy.yml up -d
+        docker compose -f docker-compose.sqlproxy.yml up -d
         sleep 60
     
     - name: Test PHPCloud health endpoint
@@ -119,7 +119,7 @@ jobs:
     - name: Test SQL proxy initialization
       run: |
         echo "Checking SQL proxy logs..."
-        docker compose -f docker compose.sqlproxy.yml logs phpcloud | grep "SQL proxy started"
+        docker compose -f docker-compose.sqlproxy.yml logs phpcloud | grep "SQL proxy started"
         echo "✅ SQL proxy initialized"
     
     - name: Install WordPress through SQL proxy
@@ -153,34 +153,34 @@ jobs:
     - name: Test database connectivity through proxy
       run: |
         echo "Verifying database tables created via proxy..."
-        docker compose -f docker compose.sqlproxy.yml exec -T mysql \
+        docker compose -f docker-compose.sqlproxy.yml exec -T mysql \
           mysql -uwordpress -pwordpress wordpress -e "SHOW TABLES;" | grep -E "wp_posts|wp_users|wp_options"
         echo "✅ Database tables created through SQL proxy"
     
     - name: Test migration system
       run: |
         echo "Testing migration system..."
-        docker compose -f docker compose.sqlproxy.yml logs phpcloud | grep -E "(migration|lock)" | head -5
+        docker compose -f docker-compose.sqlproxy.yml logs phpcloud | grep -E "(migration|lock)" | head -5
         echo "✅ Migration system configured"
     
     - name: Test maintenance mode availability
       run: |
         echo "Testing maintenance mode configuration..."
-        docker compose -f docker compose.sqlproxy.yml logs phpcloud | grep "maintenance"
+        docker compose -f docker-compose.sqlproxy.yml logs phpcloud | grep "maintenance"
         echo "✅ Maintenance mode available"
     
     - name: Get logs on failure
       if: failure()
       run: |
         echo "=== PHPCloud Logs ==="
-        docker compose -f docker compose.sqlproxy.yml logs phpcloud
+        docker compose -f docker-compose.sqlproxy.yml logs phpcloud
         echo ""
         echo "=== WordPress Logs ==="
-        docker compose -f docker compose.sqlproxy.yml logs wordpress
+        docker compose -f docker-compose.sqlproxy.yml logs wordpress
         echo ""
         echo "=== MySQL Logs ==="
-        docker compose -f docker compose.sqlproxy.yml logs mysql
+        docker compose -f docker-compose.sqlproxy.yml logs mysql
     
     - name: Cleanup
       if: always()
-      run: docker compose -f docker compose.sqlproxy.yml down -v
+      run: docker compose -f docker-compose.sqlproxy.yml down -v
