@@ -23,7 +23,7 @@ jobs:
     
     - name: Start 3-node cluster
       run: |
-        cat > docker-compose.cluster.yml << 'EOF'
+        cat > docker compose.cluster.yml << 'EOF'
         version: '3.8'
         
         services:
@@ -114,7 +114,7 @@ jobs:
           path: /metrics
         EOF
         
-        docker-compose -f docker-compose.cluster.yml up -d
+        docker compose -f docker compose.cluster.yml up -d
         sleep 30
     
     - name: Test all nodes health
@@ -128,8 +128,8 @@ jobs:
     - name: Test cluster formation
       run: |
         echo "Checking cluster formation..."
-        docker-compose -f docker-compose.cluster.yml logs node1 | grep "members.*3" || true
-        docker-compose -f docker-compose.cluster.yml logs node1 | grep "cluster coordination started"
+        docker compose -f docker compose.cluster.yml logs node1 | grep "members.*3" || true
+        docker compose -f docker compose.cluster.yml logs node1 | grep "cluster coordination started"
         echo "✅ Cluster coordination working"
     
     - name: Test all metrics endpoints
@@ -153,21 +153,21 @@ jobs:
     - name: Verify leader election
       run: |
         echo "Checking leader election..."
-        docker-compose -f docker-compose.cluster.yml logs | grep -E "(cluster leader|leader.*elected)" | head -3
+        docker compose -f docker compose.cluster.yml logs | grep -E "(cluster leader|leader.*elected)" | head -3
         echo "✅ Leader election completed"
     
     - name: Get logs on failure
       if: failure()
       run: |
         echo "=== Node 1 Logs ==="
-        docker-compose -f docker-compose.cluster.yml logs node1
+        docker compose -f docker compose.cluster.yml logs node1
         echo ""
         echo "=== Node 2 Logs ==="
-        docker-compose -f docker-compose.cluster.yml logs node2
+        docker compose -f docker compose.cluster.yml logs node2
         echo ""
         echo "=== Node 3 Logs ==="
-        docker-compose -f docker-compose.cluster.yml logs node3
+        docker compose -f docker compose.cluster.yml logs node3
     
     - name: Cleanup
       if: always()
-      run: docker-compose -f docker-compose.cluster.yml down -v
+      run: docker compose -f docker compose.cluster.yml down -v

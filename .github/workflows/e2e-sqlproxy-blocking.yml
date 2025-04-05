@@ -162,13 +162,13 @@ jobs:
           target_port: 3306
         EOF
         
-        docker-compose -f docker-compose.blocking.yml up -d
+        docker compose -f docker-compose.blocking.yml up -d
         sleep 45
     
     - name: Test SQL proxy initialization
       run: |
         echo "Verifying SQL proxy started..."
-        docker-compose -f docker-compose.blocking.yml logs phpcloud | grep "SQL proxy started"
+        docker compose -f docker-compose.blocking.yml logs phpcloud | grep "SQL proxy started"
         echo "✅ SQL proxy running on port 3307"
     
     - name: Test normal operations (before migration)
@@ -190,7 +190,7 @@ jobs:
         echo "For this test, we verify the SQL proxy is ready to block writes"
         
         # Verify SQL proxy can enter migration mode
-        docker-compose -f docker-compose.blocking.yml exec -T phpcloud \
+        docker compose -f docker-compose.blocking.yml exec -T phpcloud \
           sh -c 'wget -qO- http://localhost:9090/metrics | grep -E "(sql_proxy|migration)" || echo "Metrics available"'
         
         echo "✅ Migration system ready"
@@ -220,7 +220,7 @@ jobs:
     - name: Verify database state
       run: |
         echo "Verifying database has test data..."
-        docker-compose -f docker-compose.blocking.yml exec -T mysql \
+        docker compose -f docker-compose.blocking.yml exec -T mysql \
           mysql -utestuser -ptestpass testdb -e "SELECT COUNT(*) FROM test_table;" | grep -E "[0-9]+"
         echo "✅ Database contains test data"
     
@@ -228,11 +228,11 @@ jobs:
       if: failure()
       run: |
         echo "=== PHPCloud Logs ==="
-        docker-compose -f docker-compose.blocking.yml logs phpcloud
+        docker compose -f docker-compose.blocking.yml logs phpcloud
         echo ""
         echo "=== MySQL Logs ==="
-        docker-compose -f docker-compose.blocking.yml logs mysql
+        docker compose -f docker-compose.blocking.yml logs mysql
     
     - name: Cleanup
       if: always()
-      run: docker-compose -f docker-compose.blocking.yml down -v
+      run:         docker compose -f docker-compose.blocking.yml down -v

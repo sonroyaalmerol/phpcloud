@@ -23,7 +23,7 @@ jobs:
     
     - name: Start WordPress with migration enabled
       run: |
-        cat > docker-compose.migration.yml << 'EOF'
+        cat > docker compose.migration.yml << 'EOF'
         version: '3.8'
         
         services:
@@ -113,7 +113,7 @@ jobs:
           path: /metrics
         EOF
         
-        docker-compose -f docker-compose.migration.yml up -d
+        docker compose -f docker compose.migration.yml up -d
         sleep 45
     
     - name: Install WordPress
@@ -147,7 +147,7 @@ jobs:
         echo "Testing migration system..."
         
         # Check migration logs
-        docker-compose -f docker-compose.migration.yml logs phpcloud | grep -E "(migration|lock|Checking)" | head -10
+        docker compose -f docker compose.migration.yml logs phpcloud | grep -E "(migration|lock|Checking)" | head -10
         
         # Verify user still has access after migration check
         curl -s -b /tmp/wp_session.txt http://localhost:8080/wp-admin/ | grep "Dashboard"
@@ -161,8 +161,8 @@ jobs:
         # WordPress handles its own DB updates via wp-admin/update-core.php
         
         # Verify the configuration is loaded
-        docker-compose -f docker-compose.migration.yml logs phpcloud | grep "maintenance" || true
-        docker-compose -f docker-compose.migration.yml logs phpcloud | grep "migration" | head -5
+        docker compose -f docker compose.migration.yml logs phpcloud | grep "maintenance" || true
+        docker compose -f docker compose.migration.yml logs phpcloud | grep "migration" | head -5
         
         echo "✅ Maintenance mode configured"
     
@@ -170,8 +170,8 @@ jobs:
       if: always()
       run: |
         echo "=== PHPCloud Migration Logs ==="
-        docker-compose -f docker-compose.migration.yml logs phpcloud
+        docker compose -f docker compose.migration.yml logs phpcloud
     
     - name: Cleanup
       if: always()
-      run: docker-compose -f docker-compose.migration.yml down -v
+      run: docker compose -f docker compose.migration.yml down -v
