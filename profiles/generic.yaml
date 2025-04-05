@@ -1,0 +1,28 @@
+name: generic
+
+version_detect:
+  file: ""
+  regex: ""
+  db_query: ""
+
+session:
+  cookie_name: PHPSESSID
+  php_ini:
+    session.name: PHPSESSID
+
+migration:
+  command: []
+  pre_hooks: []
+  post_hooks: []
+
+cron:
+  jobs: []
+
+writable_paths: []
+
+static_files:
+  additional_extensions: []
+
+php_ini_overrides:
+  default_charset: UTF-8
+  memory_limit: 256M

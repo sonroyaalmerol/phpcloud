@@ -1,0 +1,47 @@
+name: nextcloud
+
+version_detect:
+  file: /var/www/html/version.php
+  regex: "\\$OC_VersionString\\s*=\\s*['\"]([^'\"]+)['\"]"
+  db_query: "SELECT configvalue FROM oc_appconfig WHERE appid='core' AND configkey='version'"
+
+session:
+  cookie_name: oc_sessionPassphrase
+  php_ini:
+    session.name: oc_sessionPassphrase
+
+migration:
+  command:
+    - ["php", "/var/www/html/occ", "upgrade", "--no-interaction"]
+  pre_hooks:
+    - ["php", "/var/www/html/occ", "maintenance:mode", "--on"]
+  post_hooks:
+    - ["php", "/var/www/html/occ", "maintenance:mode", "--off"]
+    - ["php", "/var/www/html/occ", "db:add-missing-indices"]
+    - ["php", "/var/www/html/occ", "db:add-missing-columns"]
+
+cron:
+  jobs:
+    - name: nextcloud-cron
+      schedule: "*/5 * * * *"
+      type: http
+      path: /cron.php
+
+writable_paths:
+  - /var/www/html/config
+  - /var/www/html/data
+  - /var/www/html/apps
+
+static_files:
+  additional_extensions:
+    - .otf
+    - .eot
+    - .webmanifest
+
+php_ini_overrides:
+  default_charset: UTF-8
+  output_buffering: "0"
+  memory_limit: 1024M
+  max_execution_time: "300"
+  upload_max_filesize: 10G
+  post_max_size: 10G

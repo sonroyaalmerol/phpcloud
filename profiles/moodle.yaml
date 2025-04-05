@@ -1,0 +1,48 @@
+name: moodle
+
+version_detect:
+  file: /var/www/html/version.php
+  regex: "release.*['\"]([^'\";]+)['\"]"
+  db_query: "SELECT value FROM mdl_config WHERE name='release'"
+
+session:
+  cookie_name: MoodleSession
+  php_ini:
+    session.name: MoodleSession
+
+migration:
+  command:
+    - ["php", "/var/www/html/admin/cli/upgrade.php", "--non-interactive"]
+  pre_hooks:
+    - ["php", "/var/www/html/admin/cli/maintenance.php", "--enable"]
+  post_hooks:
+    - ["php", "/var/www/html/admin/cli/maintenance.php", "--disable"]
+
+cron:
+  jobs:
+    - name: moodle-cron
+      schedule: "*/5 * * * *"
+      type: cli
+      command: ["php", "/var/www/html/admin/cli/cron.php"]
+
+writable_paths:
+  - /var/www/html/config.php
+  - /var/www/html/moodledata
+  - /var/www/html/moodledata/cache
+  - /var/www/html/moodledata/localcache
+  - /var/www/html/moodledata/sessions
+  - /var/www/html/moodledata/temp
+  - /var/www/html/moodledata/trashdir
+
+static_files:
+  additional_extensions:
+    - .mjs
+    - .webmanifest
+
+php_ini_overrides:
+  default_charset: UTF-8
+  memory_limit: 512M
+  max_execution_time: "600"
+  upload_max_filesize: 2G
+  post_max_size: 2G
+  max_input_vars: "5000"

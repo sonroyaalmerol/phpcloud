@@ -1,0 +1,40 @@
+name: dolibarr
+
+version_detect:
+  file: /var/www/html/htdocs/filefunc.inc.php
+  regex: "DOL_VERSION.*['\"]([^'\"]+)['\"]"
+  db_query: "SELECT value FROM llx_const WHERE name='MAIN_VERSION_LAST_INSTALL'"
+
+session:
+  cookie_name: DOLSESSID_
+  php_ini:
+    session.name: DOLSESSID_
+
+migration:
+  command:
+    - ["php", "/var/www/html/htdocs/install/upgrade.php"]
+  pre_hooks: []
+  post_hooks: []
+
+cron:
+  jobs:
+    - name: dolibarr-cron
+      schedule: "*/15 * * * *"
+      type: http
+      path: /htdocs/cron/cron_run_jobs.php
+
+writable_paths:
+  - /var/www/html/htdocs/conf
+  - /var/www/html/documents
+  - /var/www/html/htdocs/custom
+
+static_files:
+  additional_extensions:
+    - .pjpeg
+
+php_ini_overrides:
+  default_charset: UTF-8
+  memory_limit: 512M
+  max_execution_time: "300"
+  upload_max_filesize: 128M
+  post_max_size: 128M
