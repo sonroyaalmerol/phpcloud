@@ -180,7 +180,7 @@ func (p *Proxy) proxyWithInspection(src, dst net.Conn, direction string) {
 				)
 				// Send MySQL error packet
 				errorPacket := p.createMySQLError("ERROR 1290 (HY000): Database is in read-only mode for migration")
-				src.Write(errorPacket)
+				_, _ = src.Write(errorPacket)
 				continue
 			}
 		}

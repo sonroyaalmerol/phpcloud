@@ -89,7 +89,7 @@ func (m *Manager) Start() error {
 
 	// Wait for FPM to be ready
 	if err := m.waitForReady(); err != nil {
-		m.cmd.Process.Kill()
+		_ = m.cmd.Process.Kill()
 		return fmt.Errorf("PHP-FPM failed to become ready: %w", err)
 	}
 
@@ -123,7 +123,7 @@ func (m *Manager) Stop() error {
 		if err := m.cmd.Process.Signal(os.Signal(syscall.SIGQUIT)); err != nil {
 			m.logger.Warn("Failed to send SIGQUIT to FPM", zap.Error(err))
 			// Force kill
-			m.cmd.Process.Kill()
+			_ = m.cmd.Process.Kill()
 		}
 
 		// Wait for process to exit
@@ -137,8 +137,8 @@ func (m *Manager) Stop() error {
 			m.logger.Info("PHP-FPM stopped gracefully")
 		case <-time.After(30 * time.Second):
 			m.logger.Warn("PHP-FPM graceful shutdown timeout, forcing kill")
-			m.cmd.Process.Kill()
-			m.cmd.Wait()
+			_ = m.cmd.Process.Kill()
+			_ = m.cmd.Wait()
 		}
 	}
 

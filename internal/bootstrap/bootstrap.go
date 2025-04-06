@@ -187,7 +187,9 @@ func (e *Engine) Shutdown() error {
 
 	// Stop metrics server
 	if e.metricsSrv != nil {
-		e.metricsSrv.Stop()
+		if err := e.metricsSrv.Stop(); err != nil {
+			e.logger.Error("Failed to stop metrics server", zap.Error(err))
+		}
 	}
 
 	e.logger.Info("Shutdown complete")
@@ -323,7 +325,7 @@ func (e *Engine) runMigrations(ctx context.Context) error {
 		e.logger.Info("Acquired migration lock, running migrations...")
 
 		if err := migrator.Run(ctx); err != nil {
-			migrator.ReleaseLock()
+			_ = migrator.ReleaseLock()
 			return fmt.Errorf("migration failed: %w", err)
 		}
 
@@ -511,17 +513,17 @@ func (e *Engine) onLeadershipLost() {
 // healthHandler handles health check requests
 func (e *Engine) healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("healthy"))
+	_, _ = w.Write([]byte("healthy"))
 }
 
 // readyHandler handles readiness check requests
 func (e *Engine) readyHandler(w http.ResponseWriter, r *http.Request) {
 	if !e.isReady {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte("not ready"))
+		_, _ = w.Write([]byte("not ready"))
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ready"))
+	_, _ = w.Write([]byte("ready"))
 }
