@@ -18,7 +18,6 @@ type Manager struct {
 	nodeName   string
 	memberlist *memberlist.Memberlist
 	events     chan memberlist.NodeEvent
-	isLeader   bool
 }
 
 // New creates a new cluster manager

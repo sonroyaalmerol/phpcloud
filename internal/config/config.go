@@ -289,9 +289,7 @@ func loadFromEnv(cfg *Config) error {
 	v.AutomaticEnv()
 
 	// Map environment variables to config fields
-	if v.IsSet("CONFIG") {
-		// Already handled in Load()
-	}
+	// CONFIG is already handled in Load()
 	if v.IsSet("DB_PATH") {
 		cfg.DB.Path = v.GetString("DB_PATH")
 	}
