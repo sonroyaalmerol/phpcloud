@@ -192,7 +192,16 @@ jobs:
         EOF
         
         docker compose -f docker-compose.wordpress.yml up -d
-        sleep 60
+        
+        echo "=== Waiting for containers to be healthy ==="
+        for i in {1..60}; do
+          if docker compose -f docker-compose.wordpress.yml ps | grep -q "healthy"; then
+            echo "Containers are healthy!"
+            break
+          fi
+          echo "Waiting... ($i/60)"
+          sleep 2
+        done
     
     - name: Check container status
       run: |
@@ -200,7 +209,7 @@ jobs:
         docker compose -f docker-compose.wordpress.yml ps
         echo ""
         echo "=== PHPCloud Logs ==="
-        docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=50
+        docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=100 || true
     
     - name: Test health endpoint
       run: |
@@ -373,19 +382,24 @@ jobs:
         EOF
         
         docker compose -f docker-compose.cluster.yml up -d
-        sleep 45
-    
-    - name: Wait for nodes to start
-      run: |
-        echo "Waiting for nodes to initialize..."
-        for i in {1..30}; do
+        
+        echo "=== Waiting for cluster nodes ==="
+        for i in {1..60}; do
           if curl -s http://localhost:8080/phpcloud/healthz 2>/dev/null | grep -q "healthy"; then
-            echo "Node 1 is ready"
+            echo "Node 1 is ready!"
             break
           fi
-          echo "Waiting for node 1... ($i/30)"
+          echo "Waiting for node 1... ($i/60)"
           sleep 2
         done
+    
+    - name: Check cluster node status
+      run: |
+        echo "=== Cluster Container Status ==="
+        docker compose -f docker-compose.cluster.yml ps
+        echo ""
+        echo "=== Node 1 Logs ==="
+        docker compose -f docker-compose.cluster.yml logs node1 --tail=50 || true
     
     - name: Test all nodes health
       run: |
