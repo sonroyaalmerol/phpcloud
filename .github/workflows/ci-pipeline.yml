@@ -32,6 +32,9 @@ jobs:
     - name: Download dependencies
       run: go mod download
     
+    - name: Clean test cache
+      run: go clean -testcache
+    
     - name: Run unit tests
       run: go test -v -short ./...
     
