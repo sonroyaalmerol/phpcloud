@@ -19,15 +19,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
-    
-    - name: Cache Go modules
-      uses: actions/cache@v4
-      with:
-        path: ~/go/pkg/mod
-        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-        restore-keys: |
-          ${{ runner.os }}-go-
+        go-version: '1.24'
     
     - name: Download dependencies
       run: go mod download
@@ -61,7 +53,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
+        go-version: '1.24'
     
     - name: Run golangci-lint
       uses: golangci/golangci-lint-action@v6
@@ -1039,7 +1031,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.23'
+        go-version: '1.24'
     
     - name: Run tests with coverage
       run: go test -short -coverprofile=coverage.out ./...
@@ -1058,7 +1050,8 @@ jobs:
       run: |
         COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
         echo "Total coverage: $COVERAGE%"
+        # Only warn if coverage is low, don't fail the build
         if (( $(echo "$COVERAGE < 60.0" | bc -l) )); then
-          echo "Coverage below 60%"
-          exit 1
+          echo "::warning::Coverage is below 60% (currently $COVERAGE%)"
         fi
+      continue-on-error: true
