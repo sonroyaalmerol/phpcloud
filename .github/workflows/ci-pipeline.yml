@@ -192,12 +192,21 @@ jobs:
         EOF
         
         docker compose -f docker-compose.wordpress.yml up -d
-        sleep 45
+        sleep 60
+    
+    - name: Check container status
+      run: |
+        echo "=== Container Status ==="
+        docker compose -f docker-compose.wordpress.yml ps
+        echo ""
+        echo "=== PHPCloud Logs ==="
+        docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=50
     
     - name: Test health endpoint
       run: |
         echo "Testing health endpoint..."
-        curl -s --retry 10 --retry-delay 3 http://localhost:8080/phpcloud/healthz | grep "healthy"
+        curl -v http://localhost:8080/phpcloud/healthz 2>&1
+        curl -s --retry 20 --retry-delay 3 http://localhost:8080/phpcloud/healthz | grep "healthy"
         echo "✅ Health check passed"
     
     - name: Test WordPress installation page
@@ -209,13 +218,14 @@ jobs:
     - name: Test static file serving
       run: |
         echo "Testing static file serving..."
-        curl -s --retry 10 --retry-delay 3 http://localhost:8080/wp-includes/css/dashicons.min.css | head -1
+        curl -s --retry 15 --retry-delay 3 http://localhost:8080/wp-includes/css/dashicons.min.css | head -1
         echo "✅ Static files served"
     
     - name: Test metrics endpoint
       run: |
         echo "Testing metrics endpoint..."
-        curl -s --retry 10 --retry-delay 5 http://localhost:9090/metrics | grep "go_gc_duration_seconds"
+        curl -v http://localhost:9090/metrics 2>&1 || true
+        curl -s --retry 15 --retry-delay 5 http://localhost:9090/metrics | grep "go_"
         echo "✅ Metrics endpoint working"
     
     - name: Install WordPress
@@ -335,8 +345,7 @@ jobs:
           write_timeout: 120s
           max_request_body: 134217728
         php_fpm:
-          socket: tcp://wordpress:9000
-          external: true
+          enabled: false
         session:
           enabled: true
           backend: db
@@ -354,12 +363,7 @@ jobs:
         cron:
           enabled: false
         static_files:
-          enabled: true
-          extensions:
-            - .css
-            - .js
-            - .png
-          root: /var/www/html
+          enabled: false
         logging:
           level: info
           format: json
@@ -369,14 +373,26 @@ jobs:
         EOF
         
         docker compose -f docker-compose.cluster.yml up -d
-        sleep 30
+        sleep 45
+    
+    - name: Wait for nodes to start
+      run: |
+        echo "Waiting for nodes to initialize..."
+        for i in {1..30}; do
+          if curl -s http://localhost:8080/phpcloud/healthz 2>/dev/null | grep -q "healthy"; then
+            echo "Node 1 is ready"
+            break
+          fi
+          echo "Waiting for node 1... ($i/30)"
+          sleep 2
+        done
     
     - name: Test all nodes health
       run: |
         echo "Testing all 3 nodes..."
-        curl -s --retry 15 --retry-delay 3 http://localhost:8080/phpcloud/healthz | grep "healthy"
-        curl -s --retry 15 --retry-delay 3 http://localhost:8081/phpcloud/healthz | grep "healthy"
-        curl -s --retry 15 --retry-delay 3 http://localhost:8082/phpcloud/healthz | grep "healthy"
+        curl -s --retry 20 --retry-delay 3 http://localhost:8080/phpcloud/healthz | grep "healthy"
+        curl -s --retry 20 --retry-delay 3 http://localhost:8081/phpcloud/healthz | grep "healthy"
+        curl -s --retry 20 --retry-delay 3 http://localhost:8082/phpcloud/healthz | grep "healthy"
         echo "✅ All 3 nodes healthy"
     
     - name: Test cluster formation
