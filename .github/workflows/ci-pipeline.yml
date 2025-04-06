@@ -209,13 +209,13 @@ jobs:
     - name: Test static file serving
       run: |
         echo "Testing static file serving..."
-        curl -s http://localhost:8080/wp-includes/css/dashicons.min.css | head -1
+        curl -s --retry 10 --retry-delay 3 http://localhost:8080/wp-includes/css/dashicons.min.css | head -1
         echo "✅ Static files served"
     
     - name: Test metrics endpoint
       run: |
         echo "Testing metrics endpoint..."
-        curl -s http://localhost:9090/metrics | grep "go_gc_duration_seconds"
+        curl -s --retry 10 --retry-delay 5 http://localhost:9090/metrics | grep "go_gc_duration_seconds"
         echo "✅ Metrics endpoint working"
     
     - name: Install WordPress
@@ -374,9 +374,9 @@ jobs:
     - name: Test all nodes health
       run: |
         echo "Testing all 3 nodes..."
-        curl -s http://localhost:8080/phpcloud/healthz | grep "healthy"
-        curl -s http://localhost:8081/phpcloud/healthz | grep "healthy"
-        curl -s http://localhost:8082/phpcloud/healthz | grep "healthy"
+        curl -s --retry 15 --retry-delay 3 http://localhost:8080/phpcloud/healthz | grep "healthy"
+        curl -s --retry 15 --retry-delay 3 http://localhost:8081/phpcloud/healthz | grep "healthy"
+        curl -s --retry 15 --retry-delay 3 http://localhost:8082/phpcloud/healthz | grep "healthy"
         echo "✅ All 3 nodes healthy"
     
     - name: Test cluster formation
@@ -389,9 +389,9 @@ jobs:
     - name: Test all metrics endpoints
       run: |
         echo "Testing metrics endpoints..."
-        curl -s http://localhost:9090/metrics | grep "phpcloud"
-        curl -s http://localhost:9091/metrics | grep "phpcloud"
-        curl -s http://localhost:9092/metrics | grep "phpcloud"
+        curl -s --retry 10 --retry-delay 3 http://localhost:9090/metrics | grep "phpcloud"
+        curl -s --retry 10 --retry-delay 3 http://localhost:9091/metrics | grep "phpcloud"
+        curl -s --retry 10 --retry-delay 3 http://localhost:9092/metrics | grep "phpcloud"
         echo "✅ All metrics endpoints working"
     
     - name: Test CRDT session replication
