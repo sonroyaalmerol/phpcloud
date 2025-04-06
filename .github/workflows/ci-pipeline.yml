@@ -113,7 +113,7 @@ jobs:
     
     - name: Start WordPress stack
       run: |
-        cat > docker-compose.wordpress.yml << 'EOF'
+        tee docker-compose.wordpress.yml > /dev/null << 'EOF'
         version: '3.8'
         services:
           wordpress:
@@ -282,7 +282,7 @@ jobs:
     
     - name: Start 3-node cluster
       run: |
-        cat > docker-compose.cluster.yml << 'EOF'
+        tee docker-compose.cluster.yml > /dev/null << 'EOF'
         version: '3.8'
         
         services:
@@ -452,7 +452,7 @@ jobs:
     
     - name: Start WordPress with migration enabled
       run: |
-        cat > docker-compose.migration.yml << 'EOF'
+        tee docker-compose.migration.yml > /dev/null << 'EOF'
         version: '3.8'
         
         services:
@@ -627,7 +627,7 @@ jobs:
     
     - name: Start WordPress with SQL Proxy
       run: |
-        cat > docker-compose.sqlproxy.yml << 'EOF'
+        tee docker-compose.sqlproxy.yml > /dev/null << 'EOF'
         version: '3.8'
         services:
           mysql:
@@ -810,7 +810,7 @@ jobs:
     
     - name: Start test environment with SQL proxy
       run: |
-        cat > docker-compose.blocking.yml << 'EOF'
+        tee docker-compose.blocking.yml > /dev/null << 'EOF'
         version: '3.8'
         services:
           mysql:
