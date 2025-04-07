@@ -923,9 +923,16 @@ jobs:
               DB_USER: testuser
               DB_PASS: testpass
               DB_NAME: testdb
+            healthcheck:
+              test: ["CMD", "php", "-r", "echo 'OK';"]
+              interval: 5s
+              timeout: 3s
+              retries: 10
             depends_on:
-              - mysql
-              - phpcloud
+              mysql:
+                condition: service_healthy
+              phpcloud:
+                condition: service_healthy
           
           phpcloud:
             image: phpcloud:test
@@ -937,6 +944,12 @@ jobs:
             depends_on:
               mysql:
                 condition: service_healthy
+            healthcheck:
+              test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/phpcloud/healthz"]
+              interval: 5s
+              timeout: 3s
+              retries: 20
+              start_period: 30s
         EOF
         
         cat > Dockerfile.testapp << 'EOF'
@@ -1005,7 +1018,7 @@ jobs:
           max_request_body: 134217728
         php_fpm:
           enabled: true
-          socket: tcp://wordpress:9000
+          socket: tcp://phpapp:9000
           external: true
         session:
           enabled: false
@@ -1038,7 +1051,20 @@ jobs:
         EOF
         
         docker compose -f docker-compose.blocking.yml up -d
-        sleep 45
+        
+        echo "=== Waiting for all containers to be healthy ==="
+        for i in {1..60}; do
+          status=$(docker compose -f docker-compose.blocking.yml ps --format json 2>/dev/null | grep -c '"Health":"healthy"' || echo "0")
+          if [ "$status" -ge 3 ]; then
+            echo "All containers are healthy!"
+            break
+          fi
+          if [ $((i % 10)) -eq 0 ]; then
+            echo "Waiting for containers... ($i/60)"
+            docker compose -f docker-compose.blocking.yml ps
+          fi
+          sleep 2
+        done
     
     - name: Test SQL proxy initialization
       run: |
