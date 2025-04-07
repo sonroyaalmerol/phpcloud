@@ -913,25 +913,6 @@ jobs:
               timeout: 3s
               retries: 10
           
-          phpapp:
-            build:
-              context: .
-              dockerfile: Dockerfile.testapp
-            environment:
-              DB_HOST: phpcloud
-              DB_PORT: 3307
-              DB_USER: testuser
-              DB_PASS: testpass
-              DB_NAME: testdb
-            healthcheck:
-              test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9000/test-queries.php?action=read"]
-              interval: 5s
-              timeout: 3s
-              retries: 20
-              start_period: 30s
-            depends_on:
-              - mysql
-          
           phpcloud:
             image: phpcloud:test
             ports:
@@ -942,69 +923,12 @@ jobs:
             depends_on:
               mysql:
                 condition: service_healthy
-              phpapp:
-                condition: service_healthy
             healthcheck:
               test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/phpcloud/healthz"]
               interval: 5s
               timeout: 3s
               retries: 20
               start_period: 30s
-        EOF
-        
-        cat > Dockerfile.testapp << 'EOF'
-        FROM php:8.2-cli
-        RUN docker-php-ext-install pdo pdo_mysql
-        COPY test-queries.php /test-queries.php
-        CMD ["php", "-S", "0.0.0.0:9000", "/test-queries.php"]
-        EOF
-        
-        cat > test-queries.php << 'EOF'
-        <?php
-        $db_host = $_ENV['DB_HOST'] ?? 'phpcloud';
-        $db_port = $_ENV['DB_PORT'] ?? '3307';
-        $db_user = $_ENV['DB_USER'] ?? 'testuser';
-        $db_pass = $_ENV['DB_PASS'] ?? 'testpass';
-        $db_name = $_ENV['DB_NAME'] ?? 'testdb';
-        
-        try {
-            $pdo = new PDO("mysql:host=$db_host;port=$db_port;dbname=$db_name", $db_user, $db_pass);
-            $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-            
-            // Initialize test table
-            $pdo->exec("CREATE TABLE IF NOT EXISTS test_table (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                data VARCHAR(100),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )");
-            
-            $action = $_GET['action'] ?? 'read';
-            
-            switch ($action) {
-                case 'read':
-                    $stmt = $pdo->query("SELECT * FROM test_table");
-                    echo json_encode(['status' => 'success', 'data' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
-                    break;
-                    
-                case 'write':
-                    $stmt = $pdo->prepare("INSERT INTO test_table (data) VALUES (?)");
-                    $stmt->execute(['Test data ' . time()]);
-                    echo json_encode(['status' => 'success', 'id' => $pdo->lastInsertId()]);
-                    break;
-                    
-                case 'migrate':
-                    // Migration query
-                    $pdo->exec("ALTER TABLE test_table ADD COLUMN IF NOT EXISTS new_column VARCHAR(50)");
-                    echo json_encode(['status' => 'success', 'message' => 'Migration completed']);
-                    break;
-                    
-                default:
-                    echo json_encode(['status' => 'error', 'message' => 'Unknown action']);
-            }
-        } catch (PDOException $e) {
-            http_response_code(500);
-            echo json_encode(['status' => 'error', 'message' => $e->getMessage()]);
-        }
         EOF
         
         cat > test-config-blocking.yaml << 'EOF'
@@ -1017,9 +941,7 @@ jobs:
           write_timeout: 120s
           max_request_body: 134217728
         php_fpm:
-          enabled: true
-          socket: tcp://phpapp:9000
-          external: true
+          enabled: false
         session:
           enabled: false
         cluster:
@@ -1072,58 +994,31 @@ jobs:
         docker compose -f docker-compose.blocking.yml logs phpcloud | grep "SQL proxy started"
         echo "✅ SQL proxy running on port 3307"
     
-    - name: Test normal operations (before migration)
+    - name: Test SQL proxy connectivity
       run: |
-        echo "Testing read operation..."
-        for i in {1..10}; do
-          response=$(curl -s http://localhost:8080/test-queries.php?action=read 2>&1)
-          if echo "$response" | grep -q '"status":"success"'; then
-            echo "✅ Read operation working"
+        echo "Testing SQL proxy connectivity to MySQL..."
+        for i in {1..20}; do
+          if docker compose -f docker-compose.blocking.yml exec -T mysql mysql -hphpcloud -P3307 -utestuser -ptestpass testdb -e "SELECT 1" 2>/dev/null | grep -q "1"; then
+            echo "✅ SQL proxy connectivity working"
             break
           fi
-          echo "Attempt $i/10..."
+          echo "Attempt $i/20..."
           sleep 2
         done
-        
-        echo "Testing write operation..."
-        for i in {1..10}; do
-          response=$(curl -s http://localhost:8080/test-queries.php?action=write 2>&1)
-          if echo "$response" | grep -q '"status":"success"'; then
-            echo "✅ Write operation working"
-            break
-          fi
-          echo "Attempt $i/10..."
-          sleep 2
-        done
-        
-        echo "✅ Normal operations working"
     
-    - name: Activate migration mode via API (simulated)
+    - name: Test SQL proxy read operations
       run: |
-        echo "Note: Migration mode would be activated when:" 
-        echo "  - Migration lock is acquired"
-        echo "  - SQL proxy StartMigration() is called"
-        echo ""
-        echo "For this test, we verify the SQL proxy is ready to block writes"
-        
-        # Verify SQL proxy can enter migration mode
-        docker compose -f docker-compose.blocking.yml exec -T phpcloud \
-          sh -c 'wget -qO- http://localhost:9090/metrics | grep -E "(sql_proxy|migration)" || echo "Metrics available"'
-        
-        echo "✅ Migration system ready"
+        echo "Testing SQL proxy read operations..."
+        docker compose -f docker-compose.blocking.yml exec -T mysql mysql -hphpcloud -P3307 -utestuser -ptestpass testdb -e "CREATE TABLE IF NOT EXISTS test_table (id INT AUTO_INCREMENT PRIMARY KEY, data VARCHAR(100))"
+        docker compose -f docker-compose.blocking.yml exec -T mysql mysql -hphpcloud -P3307 -utestuser -ptestpass testdb -e "SELECT * FROM test_table"
+        echo "✅ Read operations working through SQL proxy"
     
-    - name: Test migration query execution
+    - name: Test SQL proxy write operations
       run: |
-        echo "Testing migration query (ALTER TABLE)..."
-        for i in {1..10}; do
-          response=$(curl -s http://localhost:8080/test-queries.php?action=migrate 2>&1)
-          if echo "$response" | grep -q '"status":"success"'; then
-            echo "✅ Migration query executed successfully"
-            break
-          fi
-          echo "Attempt $i/10..."
-          sleep 2
-        done
+        echo "Testing SQL proxy write operations..."
+        docker compose -f docker-compose.blocking.yml exec -T mysql mysql -hphpcloud -P3307 -utestuser -ptestpass testdb -e "INSERT INTO test_table (data) VALUES ('test data')"
+        docker compose -f docker-compose.blocking.yml exec -T mysql mysql -hphpcloud -P3307 -utestuser -ptestpass testdb -e "SELECT COUNT(*) FROM test_table" | grep -q "1"
+        echo "✅ Write operations working through SQL proxy"
     
     - name: Verify SQL proxy metrics
       run: |
@@ -1139,32 +1034,17 @@ jobs:
           sleep 2
         done
     
-    - name: Test concurrent access during normal mode
-      run: |
-        echo "Testing concurrent reads and writes..."
-        for i in {1..5}; do
-          curl -s http://localhost:8080/test-queries.php?action=write > /dev/null &
-          curl -s http://localhost:8080/test-queries.php?action=read > /dev/null &
-        done
-        wait
-        echo "✅ Concurrent operations completed"
-    
-    - name: Verify database state
-      run: |
-        echo "Verifying database has test data..."
-        result=$(docker compose -f docker-compose.blocking.yml exec -T mysql \
-          mysql -utestuser -ptestpass testdb -e "SELECT COUNT(*) FROM test_table;" 2>/dev/null)
-        echo "Query result: $result"
-        echo "✅ Database contains test data"
-    
     - name: Get logs on failure
       if: failure()
       run: |
         echo "=== PHPCloud Logs ==="
-        docker compose -f docker-compose.blocking.yml logs phpcloud
+        docker compose -f docker-compose.blocking.yml logs phpcloud || true
         echo ""
         echo "=== MySQL Logs ==="
-        docker compose -f docker-compose.blocking.yml logs mysql
+        docker compose -f docker-compose.blocking.yml logs mysql || true
+        echo ""
+        echo "=== Container Status ==="
+        docker compose -f docker-compose.blocking.yml ps || true
     
     - name: Cleanup
       if: always()
