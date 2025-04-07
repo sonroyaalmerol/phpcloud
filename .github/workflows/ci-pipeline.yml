@@ -924,15 +924,13 @@ jobs:
               DB_PASS: testpass
               DB_NAME: testdb
             healthcheck:
-              test: ["CMD", "php", "-r", "echo 'OK';"]
+              test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9000/test-queries.php?action=read"]
               interval: 5s
               timeout: 3s
-              retries: 10
+              retries: 20
+              start_period: 30s
             depends_on:
-              mysql:
-                condition: service_healthy
-              phpcloud:
-                condition: service_healthy
+              - mysql
           
           phpcloud:
             image: phpcloud:test
@@ -943,6 +941,8 @@ jobs:
               - ./test-config-blocking.yaml:/phpcloud/phpcloud.yaml:ro
             depends_on:
               mysql:
+                condition: service_healthy
+              phpapp:
                 condition: service_healthy
             healthcheck:
               test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/phpcloud/healthz"]
