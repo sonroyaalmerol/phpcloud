@@ -109,7 +109,7 @@ jobs:
     - name: Start WordPress stack
       run: |
         tee docker-compose.wordpress.yml > /dev/null << 'EOF'
-        version: '3.8'
+        # version: '3.8' (deprecated)
         services:
           wordpress:
             image: wordpress:6.4-php8.2-fpm
@@ -355,7 +355,7 @@ jobs:
     - name: Start 3-node cluster
       run: |
         tee docker-compose.cluster.yml > /dev/null << 'EOF'
-        version: '3.8'
+        # version: '3.8' (deprecated)
         
         services:
           node1:
@@ -536,7 +536,7 @@ jobs:
     - name: Start WordPress with migration enabled
       run: |
         tee docker-compose.migration.yml > /dev/null << 'EOF'
-        version: '3.8'
+        # version: '3.8' (deprecated)
         
         services:
           wordpress:
@@ -711,7 +711,7 @@ jobs:
     - name: Start WordPress with SQL Proxy
       run: |
         tee docker-compose.sqlproxy.yml > /dev/null << 'EOF'
-        version: '3.8'
+        # version: '3.8' (deprecated)
         services:
           mysql:
             image: mysql:8.0
@@ -894,7 +894,7 @@ jobs:
     - name: Start test environment with SQL proxy
       run: |
         tee docker-compose.blocking.yml > /dev/null << 'EOF'
-        version: '3.8'
+        # version: '3.8' (deprecated)
         services:
           mysql:
             image: mysql:8.0
@@ -1000,7 +1000,8 @@ jobs:
           write_timeout: 120s
           max_request_body: 134217728
         php_fpm:
-          socket: tcp://phpapp:9000
+          enabled: true
+          socket: tcp://wordpress:9000
           external: true
         session:
           enabled: false
