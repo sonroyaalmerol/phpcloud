@@ -918,6 +918,7 @@ jobs:
             ports:
               - "8080:8080"
               - "3307:3307"
+              - "9090:9090"
             volumes:
               - ./test-config-blocking.yaml:/phpcloud/phpcloud.yaml:ro
             depends_on:
