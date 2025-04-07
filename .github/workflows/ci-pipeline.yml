@@ -141,12 +141,19 @@ jobs:
             image: phpcloud:test
             ports:
               - "8080:8080"
+              - "9090:9090"
             volumes:
               - wordpress_data:/var/www/html:ro
               - ./test-config.yaml:/phpcloud/phpcloud.yaml:ro
             depends_on:
               - wordpress
               - db
+            healthcheck:
+              test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/phpcloud/healthz"]
+              interval: 5s
+              timeout: 3s
+              retries: 20
+              start_period: 30s
         
         volumes:
           wordpress_data:
@@ -194,12 +201,16 @@ jobs:
         docker compose -f docker-compose.wordpress.yml up -d
         
         echo "=== Waiting for containers to be healthy ==="
-        for i in {1..60}; do
-          if docker compose -f docker-compose.wordpress.yml ps | grep -q "healthy"; then
-            echo "Containers are healthy!"
+        for i in {1..90}; do
+          status=$(docker compose -f docker-compose.wordpress.yml ps --format json 2>/dev/null | grep -o '"Health":"[^"]*"' | head -1 || echo "")
+          if echo "$status" | grep -q "healthy"; then
+            echo "PHPCloud container is healthy!"
             break
           fi
-          echo "Waiting... ($i/60)"
+          if [ $((i % 10)) -eq 0 ]; then
+            echo "Still waiting... ($i/90)"
+            docker compose -f docker-compose.wordpress.yml ps
+          fi
           sleep 2
         done
     
@@ -211,21 +222,28 @@ jobs:
         echo "=== PHPCloud Logs ==="
         docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=100 || true
     
+    - name: Wait for startup
+      run: |
+        echo "=== Waiting for containers to fully start ==="
+        sleep 30
+        echo "=== Container processes ==="
+        docker compose -f docker-compose.wordpress.yml exec phpcloud ps aux || true
+        echo "=== Container logs ==="
+        docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=50
+    
     - name: Test health endpoint
       run: |
         echo "Testing health endpoint..."
-        echo "=== Debug: Checking if port is open ==="
-        nc -zv localhost 8080 || true
-        echo "=== Debug: Container logs ==="
-        docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=30 || true
-        echo "=== Attempting health check with retries ==="
         for i in {1..30}; do
           response=$(curl -s http://localhost:8080/phpcloud/healthz 2>&1)
           if echo "$response" | grep -q "healthy"; then
             echo "✅ Health check passed"
             exit 0
           fi
-          echo "Attempt $i/30: $response"
+          if [ $i -eq 1 ] || [ $((i % 5)) -eq 0 ]; then
+            echo "Attempt $i/30: $response"
+            docker compose -f docker-compose.wordpress.yml logs phpcloud --tail=10
+          fi
           sleep 2
         done
         echo "❌ Health check failed after 30 attempts"
