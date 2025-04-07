@@ -43,6 +43,7 @@ type ServerConfig struct {
 
 // PHPFPMConfig defines PHP-FPM settings
 type PHPFPMConfig struct {
+	Enabled         bool              `yaml:"enabled" mapstructure:"enabled"` // If false, skip FPM entirely
 	Socket          string            `yaml:"socket" mapstructure:"socket"`
 	Binary          string            `yaml:"binary" mapstructure:"binary"`
 	Config          string            `yaml:"config" mapstructure:"config"`
@@ -236,6 +237,7 @@ func setDefaults(cfg *Config) {
 	cfg.Server.WriteTimeout = 120 * time.Second
 	cfg.Server.MaxRequestBody = 10 * 1024 * 1024 * 1024 // 10GB
 
+	cfg.PHPFPM.Enabled = true
 	cfg.PHPFPM.Socket = "unix:///run/php-fpm.sock"
 	cfg.PHPFPM.Binary = "php-fpm"
 	cfg.PHPFPM.Config = "/etc/php/php-fpm.conf"

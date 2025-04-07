@@ -37,32 +37,35 @@ func New(cfg *config.Config, fpmMgr *fpm.Manager, sessionMgr *session.Manager, l
 		internalMux: http.NewServeMux(),
 	}
 
-	// Create FastCGI handler
-	// Determine connection type and address
-	var network, address string
-	if strings.HasPrefix(cfg.PHPFPM.Socket, "tcp://") {
-		network = "tcp"
-		address = strings.TrimPrefix(cfg.PHPFPM.Socket, "tcp://")
-	} else if strings.HasPrefix(cfg.PHPFPM.Socket, "unix://") {
-		network = "unix"
-		address = strings.TrimPrefix(cfg.PHPFPM.Socket, "unix://")
-	} else {
-		// Default to unix socket
-		network = "unix"
-		address = cfg.PHPFPM.Socket
+	// Only create PHP handler if FPM is enabled
+	if cfg.PHPFPM.Enabled {
+		// Create FastCGI handler
+		// Determine connection type and address
+		var network, address string
+		if strings.HasPrefix(cfg.PHPFPM.Socket, "tcp://") {
+			network = "tcp"
+			address = strings.TrimPrefix(cfg.PHPFPM.Socket, "tcp://")
+		} else if strings.HasPrefix(cfg.PHPFPM.Socket, "unix://") {
+			network = "unix"
+			address = strings.TrimPrefix(cfg.PHPFPM.Socket, "unix://")
+		} else {
+			// Default to unix socket
+			network = "unix"
+			address = cfg.PHPFPM.Socket
+		}
+
+		// Create gofast client factory and handler
+		connFactory := gofast.SimpleConnFactory(network, address)
+		clientFactory := gofast.SimpleClientFactory(connFactory)
+
+		// Create the PHP file handler with middleware chain
+		// NewPHPFS middleware handles PHP file mapping
+		sessionHandler := gofast.Chain(
+			gofast.NewPHPFS(cfg.StaticFiles.Root),
+		)(gofast.BasicSession)
+
+		s.phpHandler = gofast.NewHandler(sessionHandler, clientFactory)
 	}
-
-	// Create gofast client factory and handler
-	connFactory := gofast.SimpleConnFactory(network, address)
-	clientFactory := gofast.SimpleClientFactory(connFactory)
-
-	// Create the PHP file handler with middleware chain
-	// NewPHPFS middleware handles PHP file mapping
-	sessionHandler := gofast.Chain(
-		gofast.NewPHPFS(cfg.StaticFiles.Root),
-	)(gofast.BasicSession)
-
-	s.phpHandler = gofast.NewHandler(sessionHandler, clientFactory)
 
 	return s, nil
 }
@@ -196,7 +199,13 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) {
 
 // servePHP forwards the request to PHP-FPM
 func (s *Server) servePHP(w http.ResponseWriter, r *http.Request) {
-	if !s.fpmManager.IsRunning() {
+	// Check if PHP handler is available
+	if s.phpHandler == nil {
+		http.Error(w, "PHP processing disabled", http.StatusServiceUnavailable)
+		return
+	}
+
+	if s.fpmManager == nil || !s.fpmManager.IsRunning() {
 		http.Error(w, "PHP-FPM not available", http.StatusServiceUnavailable)
 		return
 	}

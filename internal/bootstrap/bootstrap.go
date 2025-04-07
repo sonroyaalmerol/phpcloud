@@ -88,9 +88,13 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("session manager initialization failed: %w", err)
 	}
 
-	// Step 6: Start PHP-FPM
-	if err := e.initFPMManager(); err != nil {
-		return fmt.Errorf("PHP-FPM initialization failed: %w", err)
+	// Step 6: Start PHP-FPM (if enabled)
+	if e.config.PHPFPM.Enabled {
+		if err := e.initFPMManager(); err != nil {
+			return fmt.Errorf("PHP-FPM initialization failed: %w", err)
+		}
+	} else {
+		e.logger.Info("PHP-FPM disabled, skipping initialization")
 	}
 
 	// Step 7: Start cron scheduler (if leader)
