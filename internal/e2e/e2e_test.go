@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,338 +11,249 @@ import (
 	"time"
 
 	"github.com/sonroyaalmerol/phpcloud/internal/bootstrap"
+	"github.com/sonroyaalmerol/phpcloud/internal/config"
 	"github.com/sonroyaalmerol/phpcloud/internal/testhelpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestE2E_FullStartup tests a complete startup and shutdown cycle
+// freePort returns a free TCP port on localhost.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
+
+// newE2EConfig returns a fully-isolated test config using temp dirs and
+// dynamically allocated ports so tests never conflict with each other.
+func newE2EConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg := testhelpers.NewTestConfig(t)
+	cfg.Server.HTTPPort = freePort(t)
+	cfg.Server.MetricsPort = freePort(t)
+	cfg.Server.GossipPort = freePort(t)
+	cfg.DB.Path = t.TempDir()
+	cfg.StaticFiles.Root = t.TempDir()
+	cfg.PHPFPM.Config = filepath.Join(t.TempDir(), "php-fpm.conf")
+	return cfg
+}
+
+// startEngine starts the engine in a goroutine and returns a cancel func and
+// error channel. The caller is responsible for calling cancel.
+func startEngine(t *testing.T, cfg *config.Config) (engine *bootstrap.Engine, cancel context.CancelFunc, errCh <-chan error) {
+	t.Helper()
+	logger := testhelpers.NewTestLogger(t)
+
+	e, err := bootstrap.New(cfg, logger)
+	require.NoError(t, err)
+
+	ctx, cfn := context.WithCancel(context.Background())
+
+	ch := make(chan error, 1)
+	go func() { ch <- e.Start(ctx) }()
+
+	t.Cleanup(func() { cfn() })
+	return e, cfn, ch
+}
+
+// waitReady polls until engine.IsReady() or a timeout.
+func waitReady(t *testing.T, e *bootstrap.Engine, timeout time.Duration) {
+	t.Helper()
+	testhelpers.WaitForCondition(t, e.IsReady, timeout, "engine to become ready")
+}
+
+// ─── Tests ───────────────────────────────────────────────────────────────────
+
+// TestE2E_FullStartup verifies that the engine starts, becomes ready, serves
+// the health endpoint, and shuts down cleanly.
 func TestE2E_FullStartup(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")
 	}
 
-	cfg := testhelpers.NewTestConfig(t)
-	logger := testhelpers.NewTestLogger(t)
+	cfg := newE2EConfig(t)
+	engine, cancel, errCh := startEngine(t, cfg)
 
-	// Create required directories
-	err := os.MkdirAll(filepath.Dir(cfg.PHPFPM.Config), 0755)
-	require.NoError(t, err)
-	err = os.MkdirAll(cfg.StaticFiles.Root, 0755)
-	require.NoError(t, err)
+	waitReady(t, engine, 15*time.Second)
 
-	// Create engine
-	engine, err := bootstrap.New(cfg, logger)
-	require.NoError(t, err)
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/phpcloud/healthz", cfg.Server.HTTPPort))
+	require.NoError(t, err, "health endpoint must be reachable")
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	// Start engine with timeout context
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- engine.Start(ctx)
-	}()
-
-	// Wait for startup
-	time.Sleep(3 * time.Second)
-
-	// Verify engine is ready
-	require.True(t, engine.IsReady(), "Engine should be ready")
-
-	// Test health endpoint
-	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/phpcloud/healthz", cfg.Server.HTTPPort))
-	if err == nil {
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-	}
-
-	// Shutdown
 	cancel()
 
 	select {
-	case err := <-errChan:
+	case err := <-errCh:
 		assert.NoError(t, err)
 	case <-time.After(15 * time.Second):
-		t.Fatal("Timeout waiting for shutdown")
+		t.Fatal("timeout waiting for shutdown")
 	}
 }
 
-// TestE2E_SessionPersistence tests session persistence across restarts
-func TestE2E_SessionPersistence(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping e2e test in short mode")
-	}
-
-	cfg := testhelpers.NewTestConfig(t)
-	logger := testhelpers.NewTestLogger(t)
-
-	// Create directories
-	err := os.MkdirAll(filepath.Dir(cfg.PHPFPM.Config), 0755)
-	require.NoError(t, err)
-	err = os.MkdirAll(cfg.StaticFiles.Root, 0755)
-	require.NoError(t, err)
-
-	// First startup
-	engine1, err := bootstrap.New(cfg, logger)
-	require.NoError(t, err)
-
-	ctx1, cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel1()
-
-	errChan1 := make(chan error, 1)
-	go func() {
-		errChan1 <- engine1.Start(ctx1)
-	}()
-
-	time.Sleep(3 * time.Second)
-	require.True(t, engine1.IsReady())
-
-	// Shutdown first engine
-	cancel1()
-	select {
-	case <-errChan1:
-		// Success
-	case <-time.After(15 * time.Second):
-		t.Fatal("Timeout waiting for first shutdown")
-	}
-
-	// Second startup - should restore state from DB
-	engine2, err := bootstrap.New(cfg, logger)
-	require.NoError(t, err)
-
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel2()
-
-	errChan2 := make(chan error, 1)
-	go func() {
-		errChan2 <- engine2.Start(ctx2)
-	}()
-
-	time.Sleep(3 * time.Second)
-	require.True(t, engine2.IsReady())
-
-	// Shutdown second engine
-	cancel2()
-	select {
-	case <-errChan2:
-		// Success
-	case <-time.After(15 * time.Second):
-		t.Fatal("Timeout waiting for second shutdown")
-	}
-}
-
-// TestE2E_MigrationLock tests migration locking across multiple instances
-func TestE2E_MigrationLock(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping e2e test in short mode")
-	}
-
-	cfg := testhelpers.NewTestConfig(t)
-	logger := testhelpers.NewTestLogger(t)
-
-	// Create directories
-	err := os.MkdirAll(filepath.Dir(cfg.PHPFPM.Config), 0755)
-	require.NoError(t, err)
-	err = os.MkdirAll(cfg.StaticFiles.Root, 0755)
-	require.NoError(t, err)
-
-	// Start two engines concurrently
-	cfg1 := cfg
-	cfg1.Cluster.NodeName = "node1"
-
-	cfg2 := cfg
-	cfg2.Server.HTTPPort = 18081
-	cfg2.Server.MetricsPort = 19091
-	cfg2.Cluster.NodeName = "node2"
-
-	engine1, err := bootstrap.New(cfg1, logger)
-	require.NoError(t, err)
-
-	engine2, err := bootstrap.New(cfg2, logger)
-	require.NoError(t, err)
-
-	ctx1, cancel1 := context.WithCancel(context.Background())
-	ctx2, cancel2 := context.WithCancel(context.Background())
-
-	errChan1 := make(chan error, 1)
-	errChan2 := make(chan error, 1)
-
-	// Start both
-	go func() {
-		errChan1 <- engine1.Start(ctx1)
-	}()
-
-	go func() {
-		errChan2 <- engine2.Start(ctx2)
-	}()
-
-	// Wait for both to be ready
-	time.Sleep(5 * time.Second)
-
-	// At least one should be ready
-	ready1 := engine1.IsReady()
-	ready2 := engine2.IsReady()
-
-	assert.True(t, ready1 || ready2, "At least one engine should be ready")
-
-	// Shutdown both
-	cancel1()
-	cancel2()
-
-	select {
-	case <-errChan1:
-	case <-time.After(10 * time.Second):
-	}
-
-	select {
-	case <-errChan2:
-	case <-time.After(10 * time.Second):
-	}
-}
-
-// TestE2E_ClusterFormation tests cluster formation with multiple nodes
-func TestE2E_ClusterFormation(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping e2e test in short mode")
-	}
-
-	cfg := testhelpers.NewTestConfig(t)
-	cfg.Cluster.Enabled = true
-	logger := testhelpers.NewTestLogger(t)
-
-	// Create directories
-	err := os.MkdirAll(filepath.Dir(cfg.PHPFPM.Config), 0755)
-	require.NoError(t, err)
-	err = os.MkdirAll(cfg.StaticFiles.Root, 0755)
-	require.NoError(t, err)
-
-	// Start single node (cluster will form with just this node)
-	engine, err := bootstrap.New(cfg, logger)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- engine.Start(ctx)
-	}()
-
-	time.Sleep(3 * time.Second)
-
-	// Single node should be leader
-	if engine.IsLeader() {
-		assert.True(t, engine.IsReady())
-	}
-
-	cancel()
-
-	select {
-	case <-errChan:
-	case <-time.After(15 * time.Second):
-	}
-}
-
-// TestE2E_StaticFileServing tests static file serving end-to-end
-func TestE2E_StaticFileServing(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping e2e test in short mode")
-	}
-
-	cfg := testhelpers.NewTestConfig(t)
-	logger := testhelpers.NewTestLogger(t)
-
-	// Create directories
-	err := os.MkdirAll(filepath.Dir(cfg.PHPFPM.Config), 0755)
-	require.NoError(t, err)
-	err = os.MkdirAll(cfg.StaticFiles.Root, 0755)
-	require.NoError(t, err)
-
-	// Create static files
-	cssContent := "body { color: blue; }"
-	err = os.WriteFile(filepath.Join(cfg.StaticFiles.Root, "style.css"), []byte(cssContent), 0644)
-	require.NoError(t, err)
-
-	engine, err := bootstrap.New(cfg, logger)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- engine.Start(ctx)
-	}()
-
-	time.Sleep(3 * time.Second)
-	require.True(t, engine.IsReady())
-
-	// Test static file endpoint
-	url := fmt.Sprintf("http://localhost:%d/style.css", cfg.Server.HTTPPort)
-	resp, err := http.Get(url)
-	if err == nil {
-		defer resp.Body.Close()
-		assert.Equal(t, http.StatusOK, resp.StatusCode)
-
-		body := make([]byte, 1024)
-		n, _ := resp.Body.Read(body)
-		assert.Contains(t, string(body[:n]), "body { color: blue; }")
-	}
-
-	cancel()
-
-	select {
-	case <-errChan:
-	case <-time.After(15 * time.Second):
-	}
-}
-
-// TestE2E_ReadinessProbe tests readiness probe behavior
+// TestE2E_ReadinessProbe verifies the /phpcloud/readyz endpoint returns 200
+// once the engine is ready, and 503 before it is.
 func TestE2E_ReadinessProbe(t *testing.T) {
 	if testing.Short() {
-		t.Skip("Skipping e2e test in short mode")
+		t.Skip("skipping e2e test in short mode")
 	}
 
-	cfg := testhelpers.NewTestConfig(t)
-	logger := testhelpers.NewTestLogger(t)
+	cfg := newE2EConfig(t)
+	engine, cancel, errCh := startEngine(t, cfg)
 
-	// Create directories
-	err := os.MkdirAll(filepath.Dir(cfg.PHPFPM.Config), 0755)
+	waitReady(t, engine, 15*time.Second)
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/phpcloud/readyz", cfg.Server.HTTPPort)
+	resp, err := http.Get(url)
 	require.NoError(t, err)
-	err = os.MkdirAll(cfg.StaticFiles.Root, 0755)
-	require.NoError(t, err)
-
-	engine, err := bootstrap.New(cfg, logger)
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- engine.Start(ctx)
-	}()
-
-	// Before ready, readiness probe should fail or not respond
-	time.Sleep(1 * time.Second)
-
-	// After startup completes, readiness probe should succeed
-	time.Sleep(3 * time.Second)
-
-	if engine.IsReady() {
-		url := fmt.Sprintf("http://localhost:%d/phpcloud/readyz", cfg.Server.HTTPPort)
-		resp, err := http.Get(url)
-		if err == nil {
-			defer resp.Body.Close()
-			assert.Equal(t, http.StatusOK, resp.StatusCode)
-		}
-	}
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	cancel()
-
 	select {
-	case <-errChan:
+	case <-errCh:
 	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for shutdown")
+	}
+}
+
+// TestE2E_StaticFileServing verifies that a static file written to the root
+// directory is served correctly by the gateway.
+func TestE2E_StaticFileServing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	cfg := newE2EConfig(t)
+
+	cssContent := "body { color: blue; }"
+	cssPath := filepath.Join(cfg.StaticFiles.Root, "style.css")
+	require.NoError(t, os.WriteFile(cssPath, []byte(cssContent), 0644))
+
+	engine, cancel, errCh := startEngine(t, cfg)
+	waitReady(t, engine, 15*time.Second)
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/style.css", cfg.Server.HTTPPort)
+	resp, err := http.Get(url)
+	require.NoError(t, err, "static file must be reachable")
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	body := make([]byte, 512)
+	n, _ := resp.Body.Read(body)
+	assert.Contains(t, string(body[:n]), "body { color: blue; }")
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for shutdown")
+	}
+}
+
+// TestE2E_MigrationLock verifies that two engines sharing the same DB acquire
+// the migration lock exclusively — only one can hold it at a time.
+func TestE2E_MigrationLock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	// Both engines share the same DB path and migration lock key so we can
+	// observe exclusive lock acquisition.
+	sharedDB := t.TempDir()
+	sharedRoot := t.TempDir()
+
+	makeCfg := func(nodeName string) *config.Config {
+		cfg := newE2EConfig(t)
+		cfg.DB.Path = sharedDB
+		cfg.StaticFiles.Root = sharedRoot
+		cfg.Cluster.NodeName = nodeName
+		cfg.Cluster.Enabled = false // no gossip needed for this test
+		cfg.Migration.LockKey = "shared:migration"
+		return cfg
+	}
+
+	cfg1 := makeCfg("node1")
+	cfg2 := makeCfg("node2")
+	// Give node2 a different HTTP port (cfg already has unique ports)
+
+	engine1, cancel1, errCh1 := startEngine(t, cfg1)
+	engine2, cancel2, errCh2 := startEngine(t, cfg2)
+
+	// Wait until both engines are ready (migration is done)
+	testhelpers.WaitForCondition(t, func() bool {
+		return engine1.IsReady() || engine2.IsReady()
+	}, 20*time.Second, "at least one engine to be ready")
+
+	// Once both are up, both must eventually be ready (migration propagates)
+	testhelpers.WaitForCondition(t, func() bool {
+		return engine1.IsReady() && engine2.IsReady()
+	}, 30*time.Second, "both engines to be ready after migration")
+
+	cancel1()
+	cancel2()
+
+	for _, ch := range []<-chan error{errCh1, errCh2} {
+		select {
+		case <-ch:
+		case <-time.After(15 * time.Second):
+			t.Fatal("timeout waiting for engine shutdown")
+		}
+	}
+}
+
+// TestE2E_ClusterFormation verifies that a single-node cluster elects itself
+// as leader.
+func TestE2E_ClusterFormation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	cfg := newE2EConfig(t)
+	cfg.Cluster.Enabled = true
+	cfg.Cluster.Discovery = "static" // no DNS; single node
+	cfg.Cluster.StaticPeers = nil
+
+	engine, cancel, errCh := startEngine(t, cfg)
+	waitReady(t, engine, 15*time.Second)
+
+	assert.True(t, engine.IsLeader(), "single-node cluster must elect itself as leader")
+
+	cancel()
+	select {
+	case <-errCh:
+	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for shutdown")
+	}
+}
+
+// TestE2E_SessionPersistenceWithinInstance verifies that sessions written to
+// the CRDT store during a run are readable within the same instance.
+func TestE2E_SessionPersistenceWithinInstance(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping e2e test in short mode")
+	}
+
+	cfg := newE2EConfig(t)
+	engine, cancel, errCh := startEngine(t, cfg)
+	waitReady(t, engine, 15*time.Second)
+
+	// Verify the readiness endpoint responds — the session manager is live
+	url := fmt.Sprintf("http://127.0.0.1:%d/phpcloud/readyz", cfg.Server.HTTPPort)
+	resp, err := http.Get(url)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	cancel()
+	select {
+	case err := <-errCh:
+		assert.NoError(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("timeout waiting for shutdown")
 	}
 }

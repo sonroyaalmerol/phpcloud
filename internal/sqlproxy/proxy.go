@@ -56,9 +56,13 @@ type Proxy struct {
 	migrationsStarted atomic.Int64
 
 	// Control
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
+	// acceptWg tracks the acceptLoop goroutine; connWg tracks per-connection goroutines.
+	// We must wait for acceptLoop to exit before calling connWg.Wait() because
+	// acceptLoop calls connWg.Add(1) — mixing Add and Wait is a data race.
+	ctx      context.Context
+	cancel   context.CancelFunc
+	acceptWg sync.WaitGroup
+	connWg   sync.WaitGroup
 }
 
 // New creates a new SQL proxy
@@ -90,7 +94,7 @@ func (p *Proxy) Start(listenAddr string) error {
 		zap.String("target", fmt.Sprintf("%s:%d", p.targetHost, p.targetPort)),
 	)
 
-	// Accept connections
+	p.acceptWg.Add(1)
 	go p.acceptLoop()
 
 	return nil
@@ -98,6 +102,7 @@ func (p *Proxy) Start(listenAddr string) error {
 
 // acceptLoop accepts incoming connections
 func (p *Proxy) acceptLoop() {
+	defer p.acceptWg.Done()
 	for {
 		conn, err := p.listener.Accept()
 		if err != nil {
@@ -110,14 +115,14 @@ func (p *Proxy) acceptLoop() {
 			}
 		}
 
-		p.wg.Add(1)
+		p.connWg.Add(1)
 		go p.handleConnection(conn)
 	}
 }
 
 // handleConnection handles a single client connection
 func (p *Proxy) handleConnection(clientConn net.Conn) {
-	defer p.wg.Done()
+	defer p.connWg.Done()
 
 	p.connectionsTotal.Add(1)
 	p.connectionsActive.Add(1)
@@ -333,15 +338,29 @@ func (p *Proxy) Stop() error {
 		p.listener.Close()
 	}
 
-	// Wait for connections to close
-	done := make(chan struct{})
+	// Wait for acceptLoop to finish first (it calls connWg.Add, so we must
+	// drain it before calling connWg.Wait to avoid a data race).
+	acceptDone := make(chan struct{})
 	go func() {
-		p.wg.Wait()
-		close(done)
+		p.acceptWg.Wait()
+		close(acceptDone)
 	}()
 
 	select {
-	case <-done:
+	case <-acceptDone:
+	case <-time.After(5 * time.Second):
+		p.logger.Warn("Timeout waiting for accept loop to stop")
+	}
+
+	// Now safe to wait for all connection goroutines to finish
+	connDone := make(chan struct{})
+	go func() {
+		p.connWg.Wait()
+		close(connDone)
+	}()
+
+	select {
+	case <-connDone:
 	case <-time.After(30 * time.Second):
 		p.logger.Warn("Timeout waiting for connections to close")
 	}

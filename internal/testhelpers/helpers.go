@@ -2,20 +2,24 @@
 package testhelpers
 
 import (
+	"net"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/sonroyaalmerol/phpcloud/internal/config"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap"
 )
 
-// NewTestConfig creates a test configuration
+// NewTestConfig creates a test configuration.
+// Ports are NOT randomised here — callers that need isolation should use
+// FreePort() to override Server.HTTPPort, Server.MetricsPort, and
+// Server.GossipPort before starting an engine.
 func NewTestConfig(t *testing.T) *config.Config {
+	t.Helper()
 	return &config.Config{
-		AppProfile: "generic",
 		Server: config.ServerConfig{
 			HTTPPort:     18080,
 			GossipPort:   17946,
@@ -24,6 +28,7 @@ func NewTestConfig(t *testing.T) *config.Config {
 			WriteTimeout: 120 * time.Second,
 		},
 		PHPFPM: config.PHPFPMConfig{
+			Enabled:     false, // no real PHP-FPM in tests
 			Socket:      "unix:///tmp/test-php-fpm.sock",
 			Binary:      "php-fpm",
 			Config:      "/tmp/test-php-fpm.conf",
@@ -72,13 +77,25 @@ func NewTestConfig(t *testing.T) *config.Config {
 	}
 }
 
-// NewTestLogger creates a test logger
+// NewTestLogger creates a test logger that writes to t.Log.
 func NewTestLogger(t *testing.T) *zap.Logger {
 	return zaptest.NewLogger(t)
 }
 
-// WaitForCondition waits for a condition to be true or timeout
+// FreePort returns a free TCP port on localhost.
+func FreePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
+}
+
+// WaitForCondition polls condition every 10ms until it returns true or timeout
+// is reached, at which point the test is failed with msg.
 func WaitForCondition(t *testing.T, condition func() bool, timeout time.Duration, msg string) {
+	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if condition() {
@@ -86,11 +103,13 @@ func WaitForCondition(t *testing.T, condition func() bool, timeout time.Duration
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("Timeout waiting for condition: %s", msg)
+	t.Fatalf("Timeout waiting for: %s", msg)
 }
 
-// TempFile creates a temporary file with the given content
+// TempFile creates a temporary file with the given content and registers
+// cleanup with t.
 func TempFile(t *testing.T, pattern string, content string) string {
+	t.Helper()
 	tmpFile, err := os.CreateTemp("", pattern)
 	require.NoError(t, err)
 
@@ -100,35 +119,15 @@ func TempFile(t *testing.T, pattern string, content string) string {
 	err = tmpFile.Close()
 	require.NoError(t, err)
 
-	t.Cleanup(func() {
-		os.Remove(tmpFile.Name())
-	})
-
+	t.Cleanup(func() { os.Remove(tmpFile.Name()) })
 	return tmpFile.Name()
 }
 
-// TempDir creates a temporary directory
+// TempDir creates a temporary directory and registers cleanup with t.
 func TempDir(t *testing.T, pattern string) string {
+	t.Helper()
 	dir, err := os.MkdirTemp("", pattern)
 	require.NoError(t, err)
-
-	t.Cleanup(func() {
-		os.RemoveAll(dir)
-	})
-
+	t.Cleanup(func() { os.RemoveAll(dir) })
 	return dir
-}
-
-// SkipIfNoPostgres skips the test if PostgreSQL is not available
-func SkipIfNoPostgres(t *testing.T) {
-	if os.Getenv("TEST_POSTGRES_DSN") == "" && os.Getenv("CI") == "" {
-		t.Skip("Skipping test: No PostgreSQL connection available. Set TEST_POSTGRES_DSN to run.")
-	}
-}
-
-// SkipIfNoMySQL skips the test if MySQL is not available
-func SkipIfNoMySQL(t *testing.T) {
-	if os.Getenv("TEST_MYSQL_DSN") == "" && os.Getenv("CI") == "" {
-		t.Skip("Skipping test: No MySQL connection available. Set TEST_MYSQL_DSN to run.")
-	}
 }
