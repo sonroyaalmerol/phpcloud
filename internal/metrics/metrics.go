@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/sonroyaalmerol/phpcloud/internal/config"
 	"go.uber.org/zap"
@@ -15,9 +14,10 @@ import (
 
 // Server handles Prometheus metrics
 type Server struct {
-	config *config.Config
-	logger *zap.Logger
-	server *http.Server
+	config   *config.Config
+	logger   *zap.Logger
+	server   *http.Server
+	registry *prometheus.Registry
 
 	// Metrics
 	RequestsTotal    prometheus.Counter
@@ -28,46 +28,64 @@ type Server struct {
 	ClusterIsLeader  prometheus.Gauge
 }
 
-// New creates a new metrics server
+// New creates a new metrics server with an isolated Prometheus registry.
+// Using a fresh registry per instance (rather than the global one) prevents
+// duplicate-registration panics when multiple engines share a process (e.g. tests).
 func New(cfg *config.Config, logger *zap.Logger) *Server {
-	s := &Server{
-		config: cfg,
-		logger: logger,
+	reg := prometheus.NewRegistry()
+
+	mustReg := func(c prometheus.Collector) {
+		reg.MustRegister(c)
 	}
 
-	// Initialize metrics
-	s.RequestsTotal = promauto.NewCounter(prometheus.CounterOpts{
+	requestsTotal := prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "phpcloud_requests_total",
 		Help: "Total number of HTTP requests",
 	})
+	mustReg(requestsTotal)
 
-	s.RequestDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+	requestDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "phpcloud_request_duration_seconds",
 		Help:    "HTTP request duration in seconds",
 		Buckets: prometheus.DefBuckets,
 	})
+	mustReg(requestDuration)
 
-	s.SessionOpsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+	sessionOpsTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "phpcloud_session_operations_total",
 		Help: "Total session operations",
 	}, []string{"operation"})
+	mustReg(sessionOpsTotal)
 
-	s.FPMWorkersActive = promauto.NewGauge(prometheus.GaugeOpts{
+	fpmWorkersActive := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "phpcloud_fpm_workers_active",
 		Help: "Number of active FPM workers",
 	})
+	mustReg(fpmWorkersActive)
 
-	s.ClusterMembers = promauto.NewGauge(prometheus.GaugeOpts{
+	clusterMembers := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "phpcloud_cluster_members_count",
 		Help: "Number of cluster members",
 	})
+	mustReg(clusterMembers)
 
-	s.ClusterIsLeader = promauto.NewGauge(prometheus.GaugeOpts{
+	clusterIsLeader := prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "phpcloud_cluster_is_leader",
 		Help: "1 if this node is the cluster leader",
 	})
+	mustReg(clusterIsLeader)
 
-	return s
+	return &Server{
+		config:           cfg,
+		logger:           logger,
+		registry:         reg,
+		RequestsTotal:    requestsTotal,
+		RequestDuration:  requestDuration,
+		SessionOpsTotal:  sessionOpsTotal,
+		FPMWorkersActive: fpmWorkersActive,
+		ClusterMembers:   clusterMembers,
+		ClusterIsLeader:  clusterIsLeader,
+	}
 }
 
 // Start starts the metrics server
@@ -75,7 +93,7 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf(":%d", s.config.Server.MetricsPort)
 
 	mux := http.NewServeMux()
-	mux.Handle(s.config.Metrics.Path, promhttp.Handler())
+	mux.Handle(s.config.Metrics.Path, promhttp.HandlerFor(s.registry, promhttp.HandlerOpts{}))
 
 	s.server = &http.Server{
 		Addr:         addr,
