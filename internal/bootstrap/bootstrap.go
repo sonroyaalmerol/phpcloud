@@ -13,7 +13,6 @@ import (
 	"github.com/sonroyaalmerol/phpcloud/internal/db"
 	"github.com/sonroyaalmerol/phpcloud/internal/fpm"
 	"github.com/sonroyaalmerol/phpcloud/internal/gateway"
-	"github.com/sonroyaalmerol/phpcloud/internal/lock"
 	"github.com/sonroyaalmerol/phpcloud/internal/metrics"
 	"github.com/sonroyaalmerol/phpcloud/internal/migration"
 	"github.com/sonroyaalmerol/phpcloud/internal/session"
@@ -30,7 +29,6 @@ type Engine struct {
 	fpmManager *fpm.Manager
 	sessionMgr *session.Manager
 	clusterMgr *cluster.Manager
-	lockMgr    lock.Manager
 	migrator   *migration.Migrator
 	cronMgr    *cron.Manager
 	gateway    *gateway.Server
@@ -73,17 +71,12 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("cluster initialization failed: %w", err)
 	}
 
-	// Step 3: Initialize distributed lock manager
-	if err := e.initLockManager(); err != nil {
-		return fmt.Errorf("lock manager initialization failed: %w", err)
-	}
-
-	// Step 4: Run migrations (if leader)
+	// Step 3: Run migrations (if leader)
 	if err := e.runMigrations(ctx); err != nil {
 		return fmt.Errorf("migration failed: %w", err)
 	}
 
-	// Step 5: Initialize session manager
+	// Step 4: Initialize session manager
 	if err := e.initSessionManager(); err != nil {
 		return fmt.Errorf("session manager initialization failed: %w", err)
 	}
@@ -210,15 +203,20 @@ func (e *Engine) IsReady() bool {
 	return e.isReady
 }
 
+// nodeName returns the configured node name, falling back to the OS hostname.
+func (e *Engine) nodeName() string {
+	if name := e.config.Cluster.NodeName; name != "" {
+		return name
+	}
+	name, _ := os.Hostname()
+	return name
+}
+
 // initDatabase initializes the CRDT storage
 func (e *Engine) initDatabase() error {
 	e.logger.Info("Initializing CRDT storage...")
 
-	// Get node ID for HLC clock
-	nodeID := e.config.Cluster.NodeName
-	if nodeID == "" {
-		nodeID, _ = os.Hostname()
-	}
+	nodeID := e.nodeName()
 
 	dbManager, err := db.New(e.config, nodeID, e.logger)
 	if err != nil {
@@ -230,7 +228,6 @@ func (e *Engine) initDatabase() error {
 		zap.String("hlc_version", dbManager.GetClock().GetLatest().String()))
 
 	e.dbManager = dbManager
-
 	return nil
 }
 
@@ -245,7 +242,7 @@ func (e *Engine) initSQLProxy() error {
 		zap.String("listen_addr", e.config.SQLProxy.ListenAddr),
 		zap.String("target", fmt.Sprintf("%s:%d", e.config.SQLProxy.TargetHost, e.config.SQLProxy.TargetPort)))
 
-	proxy, err := sqlproxy.New(e.config, e.logger, e.config.SQLProxy.ListenAddr, e.config.SQLProxy.TargetHost, e.config.SQLProxy.TargetPort)
+	proxy, err := sqlproxy.New(e.config, e.logger, e.config.SQLProxy.TargetHost, e.config.SQLProxy.TargetPort)
 	if err != nil {
 		return fmt.Errorf("failed to create SQL proxy: %w", err)
 	}
@@ -269,13 +266,7 @@ func (e *Engine) initCluster() error {
 
 	e.logger.Info("Initializing cluster coordination...")
 
-	// Get node name
-	nodeName := e.config.Cluster.NodeName
-	if nodeName == "" {
-		nodeName, _ = os.Hostname()
-	}
-
-	clusterMgr, err := cluster.New(e.config, nodeName, e.logger)
+	clusterMgr, err := cluster.New(e.config, e.nodeName(), e.logger)
 	if err != nil {
 		return err
 	}
@@ -292,19 +283,6 @@ func (e *Engine) initCluster() error {
 	// Watch for leadership changes
 	go e.watchLeadership()
 
-	return nil
-}
-
-// initLockManager initializes the distributed lock manager
-func (e *Engine) initLockManager() error {
-	e.logger.Info("Initializing lock manager...")
-
-	lockMgr, err := lock.New(e.config, e.dbManager, e.logger)
-	if err != nil {
-		return err
-	}
-
-	e.lockMgr = lockMgr
 	return nil
 }
 

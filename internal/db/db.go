@@ -202,10 +202,9 @@ func (m *Manager) DeleteSession(id string) {
 // GetAllSessions returns all non-deleted, non-expired sessions
 func (m *Manager) GetAllSessions() map[string]*crdt.SessionCRDT {
 	result := make(map[string]*crdt.SessionCRDT)
-	now := time.Now()
 
 	m.sessions.Range(func(id string, s *crdt.SessionCRDT) bool {
-		if !s.IsDeleted() && !s.IsExpired() && now.Before(s.ExpiresAt) {
+		if !s.IsDeleted() && !s.IsExpired() {
 			result[id] = s
 		}
 		return true

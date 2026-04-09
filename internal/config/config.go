@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/viper"
@@ -179,6 +180,18 @@ type ProfileCronConfig struct {
 // ProfileStaticConfig defines profile-specific static file settings
 type ProfileStaticConfig struct {
 	AdditionalExtensions []string `yaml:"additional_extensions"`
+}
+
+// ParseSocket parses the FPM socket URL into network and address components.
+// Supports "unix://", "tcp://", and bare paths (treated as unix).
+func (c PHPFPMConfig) ParseSocket() (network, address string) {
+	if strings.HasPrefix(c.Socket, "tcp://") {
+		return "tcp", strings.TrimPrefix(c.Socket, "tcp://")
+	}
+	if strings.HasPrefix(c.Socket, "unix://") {
+		return "unix", strings.TrimPrefix(c.Socket, "unix://")
+	}
+	return "unix", c.Socket
 }
 
 // Load reads configuration from file and environment variables

@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sonroyaalmerol/phpcloud/internal/config"
@@ -47,12 +48,12 @@ type Proxy struct {
 	state   State
 	stateMu sync.RWMutex
 
-	// Metrics
-	connectionsTotal  int64
-	connectionsActive int64
-	queriesBlocked    int64
-	queriesAllowed    int64
-	migrationsStarted int64
+	// Metrics — use atomics to avoid data races from concurrent goroutines
+	connectionsTotal  atomic.Int64
+	connectionsActive atomic.Int64
+	queriesBlocked    atomic.Int64
+	queriesAllowed    atomic.Int64
+	migrationsStarted atomic.Int64
 
 	// Control
 	ctx    context.Context
@@ -61,13 +62,12 @@ type Proxy struct {
 }
 
 // New creates a new SQL proxy
-func New(cfg *config.Config, logger *zap.Logger, listenAddr string, targetHost string, targetPort int) (*Proxy, error) {
+func New(cfg *config.Config, logger *zap.Logger, targetHost string, targetPort int) (*Proxy, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Proxy{
 		config:     cfg,
 		logger:     logger,
-		listener:   nil,
 		targetHost: targetHost,
 		targetPort: targetPort,
 		state:      StateNormal,
@@ -119,9 +119,9 @@ func (p *Proxy) acceptLoop() {
 func (p *Proxy) handleConnection(clientConn net.Conn) {
 	defer p.wg.Done()
 
-	p.connectionsTotal++
-	p.connectionsActive++
-	defer func() { p.connectionsActive-- }()
+	p.connectionsTotal.Add(1)
+	p.connectionsActive.Add(1)
+	defer p.connectionsActive.Add(-1)
 
 	// Connect to target database
 	targetConn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", p.targetHost, p.targetPort))
@@ -132,20 +132,18 @@ func (p *Proxy) handleConnection(clientConn net.Conn) {
 	}
 	defer targetConn.Close()
 
-	// Start bidirectional proxy with query inspection
+	// Start bidirectional proxy: client→target with inspection, target→client plain
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// Client -> Target (with query inspection)
 	go func() {
 		defer wg.Done()
 		p.proxyWithInspection(clientConn, targetConn, "client->target")
 	}()
 
-	// Target -> Client
 	go func() {
 		defer wg.Done()
-		p.pipe(targetConn, clientConn, "target->client")
+		p.proxyWithInspection(targetConn, clientConn, "target->client")
 	}()
 
 	wg.Wait()
@@ -172,46 +170,20 @@ func (p *Proxy) proxyWithInspection(src, dst net.Conn, direction string) {
 		// Inspect MySQL query if in migration mode
 		if p.isMigrating() && direction == "client->target" {
 			if p.isWriteQuery(data) && !p.isMigrationQuery(data) {
-				// Block this write
-				p.queriesBlocked++
+				p.queriesBlocked.Add(1)
 				p.logger.Warn("Blocked write query during migration",
 					zap.String("src", src.RemoteAddr().String()),
 					zap.Int("bytes", n),
 				)
-				// Send MySQL error packet
 				errorPacket := p.createMySQLError("ERROR 1290 (HY000): Database is in read-only mode for migration")
 				_, _ = src.Write(errorPacket)
 				continue
 			}
 		}
 
-		p.queriesAllowed++
+		p.queriesAllowed.Add(1)
 
 		_, err = dst.Write(data)
-		if err != nil {
-			p.logger.Debug("Write error", zap.String("direction", direction), zap.Error(err))
-			return
-		}
-	}
-}
-
-// pipe simply copies data between connections
-func (p *Proxy) pipe(src, dst net.Conn, direction string) {
-	defer src.Close()
-	defer dst.Close()
-
-	buffer := make([]byte, 65536)
-
-	for {
-		n, err := src.Read(buffer)
-		if err != nil {
-			if err != io.EOF {
-				p.logger.Debug("Read error", zap.String("direction", direction), zap.Error(err))
-			}
-			return
-		}
-
-		_, err = dst.Write(buffer[:n])
 		if err != nil {
 			p.logger.Debug("Write error", zap.String("direction", direction), zap.Error(err))
 			return
@@ -318,7 +290,7 @@ func (p *Proxy) StartMigration() {
 	}
 
 	p.state = StateMigrating
-	p.migrationsStarted++
+	p.migrationsStarted.Add(1)
 
 	p.logger.Info("SQL proxy entering read-only mode for migration",
 		zap.String("target", fmt.Sprintf("%s:%d", p.targetHost, p.targetPort)),
@@ -334,26 +306,22 @@ func (p *Proxy) EndMigration() {
 		return
 	}
 
-	blocked := p.queriesBlocked
 	p.state = StateNormal
 
 	p.logger.Info("SQL proxy exiting read-only mode",
-		zap.Int64("queries_blocked", blocked),
-		zap.Int64("queries_allowed", p.queriesAllowed),
+		zap.Int64("queries_blocked", p.queriesBlocked.Load()),
+		zap.Int64("queries_allowed", p.queriesAllowed.Load()),
 	)
 }
 
 // GetStats returns proxy statistics
 func (p *Proxy) GetStats() map[string]int64 {
-	p.stateMu.RLock()
-	defer p.stateMu.RUnlock()
-
 	return map[string]int64{
-		"connections_total":  p.connectionsTotal,
-		"connections_active": p.connectionsActive,
-		"queries_blocked":    p.queriesBlocked,
-		"queries_allowed":    p.queriesAllowed,
-		"migrations_started": p.migrationsStarted,
+		"connections_total":  p.connectionsTotal.Load(),
+		"connections_active": p.connectionsActive.Load(),
+		"queries_blocked":    p.queriesBlocked.Load(),
+		"queries_allowed":    p.queriesAllowed.Load(),
+		"migrations_started": p.migrationsStarted.Load(),
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,18 +22,17 @@ type Manager struct {
 	cmd        *exec.Cmd
 	mu         sync.RWMutex
 	running    bool
-	socketPath string
-	external   bool // If true, FPM is external (not managed by us)
+	socketAddr string // address part of the socket URL (no scheme prefix)
+	external   bool   // If true, FPM is external (not managed by us)
 }
 
 // New creates a new FPM manager
 func New(cfg *config.Config, logger *zap.Logger) (*Manager, error) {
-	socketPath := strings.TrimPrefix(cfg.PHPFPM.Socket, "unix://")
-
+	_, socketAddr := cfg.PHPFPM.ParseSocket()
 	return &Manager{
 		config:     cfg,
 		logger:     logger,
-		socketPath: socketPath,
+		socketAddr: socketAddr,
 		external:   cfg.PHPFPM.External,
 	}, nil
 }
@@ -65,10 +63,12 @@ func (m *Manager) Start() error {
 	// Managed mode: spawn and manage FPM process
 	m.logger.Info("Starting PHP-FPM...")
 
-	// Ensure socket directory exists
-	socketDir := filepath.Dir(m.socketPath)
-	if err := os.MkdirAll(socketDir, 0755); err != nil {
-		return fmt.Errorf("failed to create socket directory: %w", err)
+	// Ensure socket directory exists (only meaningful for unix sockets)
+	if network, _ := m.config.PHPFPM.ParseSocket(); network == "unix" {
+		socketDir := filepath.Dir(m.socketAddr)
+		if err := os.MkdirAll(socketDir, 0755); err != nil {
+			return fmt.Errorf("failed to create socket directory: %w", err)
+		}
 	}
 
 	// Generate FPM config
@@ -185,14 +185,13 @@ func (m *Manager) IsRunning() bool {
 	return m.running
 }
 
-// GetSocketPath returns the FPM socket path
-func (m *Manager) GetSocketPath() string {
-	return m.socketPath
+// GetSocketAddr returns the FPM socket address (without scheme prefix)
+func (m *Manager) GetSocketAddr() string {
+	return m.socketAddr
 }
 
 // generateConfig generates the PHP-FPM pool configuration
 func (m *Manager) generateConfig() error {
-	// Ensure config directory exists
 	configDir := filepath.Dir(m.config.PHPFPM.Config)
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
@@ -221,7 +220,7 @@ request_slowlog_timeout = 10s
 
 php_admin_value[memory_limit] = 512M
 `,
-		m.socketPath,
+		m.socketAddr,
 		m.config.PHPFPM.PoolSizeMax,
 		m.config.PHPFPM.PoolSizeMin,
 		m.config.PHPFPM.PoolSizeMin,
@@ -239,33 +238,18 @@ func (m *Manager) waitForReady() error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 
-	// Determine connection type and address
-	var network, address string
-	if strings.HasPrefix(m.config.PHPFPM.Socket, "tcp://") {
-		network = "tcp"
-		address = strings.TrimPrefix(m.config.PHPFPM.Socket, "tcp://")
-	} else if strings.HasPrefix(m.config.PHPFPM.Socket, "unix://") {
-		network = "unix"
-		address = strings.TrimPrefix(m.config.PHPFPM.Socket, "unix://")
-	} else {
-		// Default to unix socket
-		network = "unix"
-		address = m.config.PHPFPM.Socket
-	}
+	network, address := m.config.PHPFPM.ParseSocket()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			// For Unix sockets, check if file exists first
 			if network == "unix" {
 				if _, err := os.Stat(address); os.IsNotExist(err) {
 					continue
 				}
 			}
-
-			// Try to connect
 			conn, err := net.Dial(network, address)
 			if err == nil {
 				conn.Close()

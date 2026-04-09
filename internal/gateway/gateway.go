@@ -40,19 +40,7 @@ func New(cfg *config.Config, fpmMgr *fpm.Manager, sessionMgr *session.Manager, l
 	// Only create PHP handler if FPM is enabled
 	if cfg.PHPFPM.Enabled {
 		// Create FastCGI handler
-		// Determine connection type and address
-		var network, address string
-		if strings.HasPrefix(cfg.PHPFPM.Socket, "tcp://") {
-			network = "tcp"
-			address = strings.TrimPrefix(cfg.PHPFPM.Socket, "tcp://")
-		} else if strings.HasPrefix(cfg.PHPFPM.Socket, "unix://") {
-			network = "unix"
-			address = strings.TrimPrefix(cfg.PHPFPM.Socket, "unix://")
-		} else {
-			// Default to unix socket
-			network = "unix"
-			address = cfg.PHPFPM.Socket
-		}
+		network, address := cfg.PHPFPM.ParseSocket()
 
 		// Create gofast client factory and handler
 		connFactory := gofast.SimpleConnFactory(network, address)

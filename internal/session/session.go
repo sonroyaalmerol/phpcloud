@@ -2,8 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -164,24 +162,3 @@ func (m *Manager) ClearSessionCookie(w http.ResponseWriter) {
 	http.SetCookie(w, cookie)
 }
 
-// Serialize serializes session data to PHP format
-func (m *Manager) Serialize(data map[string]interface{}) ([]byte, error) {
-	// Simplified serialization - in production, use proper PHP serialization
-	return []byte(fmt.Sprintf("%v", data)), nil
-}
-
-// Deserialize deserializes PHP session data
-func (m *Manager) Deserialize(data []byte) (map[string]interface{}, error) {
-	// Simplified deserialization
-	return make(map[string]interface{}), nil
-}
-
-// EncodeBase64 encodes session data to base64
-func (m *Manager) EncodeBase64(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
-}
-
-// DecodeBase64 decodes base64 session data
-func (m *Manager) DecodeBase64(data string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(data)
-}
